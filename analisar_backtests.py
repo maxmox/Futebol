@@ -19,18 +19,34 @@ ARQUIVO_SAIDA = os.path.join(PASTA_BASE, "index.html")
 PLACARES = ["0-0", "1-0", "0-1", "1-1"]
 
 
+def norm_col(k):
+    return re.sub(r"[^a-z0-9]+", "_", k.strip().lower()).strip("_")
+
+
+# colunas padrao do CSV (normalizadas); qualquer outra vira stat extra embutida no JSON
+COLUNAS_BASE = {norm_col(k) for k in [
+    "Data", "Casa", "Fora", "Liga", "Mercado", "Seleção", "Tipo",
+    "Minut.", "Odd", "Placar Entrada", "Placar Final", "Result.", "L/P",
+]}
+
+
 def coletar():
     buckets = []
     linhas = []
+    stats_cols = []
     vistos = set()
     padrao = os.path.join(PASTA_BASE, "under limite *")
     for pasta in sorted(glob.glob(padrao)):
         nome = os.path.basename(pasta)
-        m = re.search(r"under limite (ht|ft)\b.*?min\s+(\d+)\s+ao\s+(\d+)", nome, re.IGNORECASE)
+        m = re.search(r"under limite (ht|ft)\b(.*?)\bmin\s+(\d+)\s+ao\s+(\d+)(.*)$", nome, re.IGNORECASE)
         if not m:
             continue
-        periodo = m.group(1)
-        min_lo, min_hi = int(m.group(2)), int(m.group(3))
+        periodo = m.group(1).lower()
+        meio = re.sub(r"\s*-\s*", " ", m.group(2)).strip()
+        meio = re.sub(r"^\s*entrada\s*", "", meio, flags=re.IGNORECASE).strip()
+        min_lo, min_hi = int(m.group(3)), int(m.group(4))
+        sufixo = re.sub(r"\s*-\s*", " · ", m.group(5).strip(" -")).strip(" ·")
+        tag = " · ".join(x for x in (meio, sufixo) if x)
         csvs = glob.glob(os.path.join(pasta, "*.csv"))
         if not csvs:
             print(f"AVISO: pasta sem CSV ignorada: {nome}")
@@ -47,22 +63,36 @@ def coletar():
                     placar = r["Placar Entrada"].strip()
                     if placar not in PLACARES:
                         PLACARES.append(placar)
-                    linhas.append([
+                    linha = [
                         bidx,
                         int(r["Minut."]),
                         float(r["Odd"]),
                         PLACARES.index(placar),
                         1 if r["Result."].strip().lower() == "win" else 0,
-                    ])
+                    ]
+                    extras = {}
+                    for k, v in r.items():
+                        if not k:
+                            continue
+                        nk = norm_col(k)
+                        if nk in COLUNAS_BASE or not v or not v.strip():
+                            continue
+                        extras[nk] = v.strip()
+                        if nk not in stats_cols:
+                            stats_cols.append(nk)
+                    if extras:
+                        linha.append(extras)
+                    linhas.append(linha)
+        label = f"{min_lo}-{min_hi}" + (f" · {tag}" if tag else "")
         buckets.append({
             "periodo": periodo,
-            "label": f"{min_lo}-{min_hi}",
+            "label": label,
             "min_lo": min_lo,
             "min_hi": min_hi,
             "centro": (min_lo + min_hi) / 2,
             "n": len(linhas) - n_antes,
         })
-    return buckets, linhas
+    return buckets, linhas, stats_cols
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -102,6 +132,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .step input { flex: 1; text-align: center; background: #0d1220; border: 1px solid var(--borda);
                 border-radius: 10px; color: var(--txt); font-size: 1.25rem; font-weight: 700; padding: 8px; }
   input:focus { outline: none; border-color: var(--azul); }
+  select { width: 100%; background: #0d1220; border: 1px solid var(--borda); border-radius: 10px;
+           color: var(--txt); font-size: .95rem; padding: 9px 10px; margin-bottom: 4px; }
+  select:focus { outline: none; border-color: var(--azul); }
   .linha2 { display: flex; gap: 20px; flex-wrap: wrap; }
 
   .veredito { text-align: center; padding: 16px 14px; border-radius: 12px; font-size: 1.15rem;
@@ -222,6 +255,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div class="scroll"><table class="dados" id="detTabela"></table></div>
       <div class="nota" style="margin-top:8px">ROI por faixa de odd dentro deste cenário (stake 10, comissão 6,5%). Verde = faixa lucrativa no histórico.</div>
     </div>
+  </div>
+
+  <!-- ============ ANÁLISE POR ESTATÍSTICA ============ -->
+  <div class="card" id="cardStats" style="display:none">
+    <h2>Análise por estatística pré-live — onde o contexto muda o edge</h2>
+    <div class="lbl">Cenário (período · minuto · placar)</div>
+    <select id="sCenario"></select>
+    <div class="lbl">Estatística pré-live (coluna extra do CSV)</div>
+    <select id="sStat"></select>
+    <div id="sResultado" style="margin-top:12px"></div>
+    <p class="nota" style="margin:10px 0 0">
+      Divide as entradas do cenário em <b>3 faixas (tercís)</b> da estatística escolhida e mostra o ROI histórico em cada uma.
+      Cenários com menos de 150 entradas com a stat preenchida não são exibidos.
+      <b>Cada segmentação é um teste a mais:</b> antes de concluir que uma faixa tem valor, lembre que múltiplos testes inflam falsos positivos —
+      exija amostra grande e confirmação em forward-test.
+    </p>
   </div>
 
   <!-- ============ COBERTURA ============ -->
@@ -495,6 +544,66 @@ function renderCobertura() {
   $('lacunas').innerHTML = notas.map(n => `<li>${n}</li>`).join('');
 }
 
+// ================= análise por estatística =================
+const extrasDe = r => r[5] || {};
+let CENARIOS_STATS = [];
+
+function initStats() {
+  const cols = DADOS.stats_cols || [];
+  if (!cols.length) return; // sem stats nos CSVs — seção fica oculta
+  $('cardStats').style.display = '';
+
+  CENARIOS_STATS = [];
+  BUCKETS.forEach((b, i) => {
+    for (const p of PLACARES) {
+      const rows = rowsCenario(i, p);
+      if (rows.length >= 150)
+        CENARIOS_STATS.push({ i, p, rows, label: `${b.periodo.toUpperCase()} ${b.label}' · ${placarFmt(p)} (n=${fmtN(rows.length)})` });
+    }
+  });
+  $('sCenario').innerHTML = CENARIOS_STATS.map((c, j) => `<option value="${j}">${c.label}</option>`).join('');
+  $('sStat').innerHTML = cols.map(c => `<option value="${c}">${c}</option>`).join('');
+  $('sCenario').onchange = renderStats;
+  $('sStat').onchange = renderStats;
+  renderStats();
+}
+
+function renderStats() {
+  const cen = CENARIOS_STATS[+($('sCenario').value || 0)];
+  const col = $('sStat').value;
+  if (!cen || !col) return;
+
+  const comStat = cen.rows.filter(r => !isNaN(parseFloat(extrasDe(r)[col])));
+  const vals = comStat.map(r => parseFloat(extrasDe(r)[col])).sort((a, b) => a - b);
+  const el = $('sResultado');
+
+  if (vals.length < 150) {
+    el.innerHTML = `<div class="veredito v-amarelo">Só ${fmtN(vals.length)} entradas têm "${col}" preenchido neste cenário — abaixo do mínimo de 150 para segmentar.</div>`;
+    return;
+  }
+  const q1 = vals[Math.floor(vals.length / 3)], q2 = vals[Math.floor(vals.length * 2 / 3)];
+  const grupos = [
+    { nome: `${q1.toFixed(1)} ou menos`, sel: comStat.filter(r => parseFloat(extrasDe(r)[col]) <= q1) },
+    { nome: `${q1.toFixed(1)} – ${q2.toFixed(1)}`, sel: comStat.filter(r => { const v = parseFloat(extrasDe(r)[col]); return v > q1 && v <= q2; }) },
+    { nome: `mais de ${q2.toFixed(1)}`, sel: comStat.filter(r => parseFloat(extrasDe(r)[col]) > q2) },
+  ];
+  const geral = resumo(comStat);
+
+  let html = '<tr><th>Faixa da stat</th><th>n</th><th>Green</th><th>Odd justa</th><th>ROI</th><th>Lucro</th></tr>';
+  for (const g of grupos) {
+    const s = resumo(g.sel);
+    const cls = s.roi >= 0 ? 'pos' : 'neg';
+    html += `<tr><td>${g.nome}</td><td>${fmtN(s.n)}</td><td>${fmtPct(s.green)}</td><td>${fmtOdd(s.justa)}</td>` +
+            `<td class="${cls}">${(s.roi >= 0 ? '+' : '') + fmtPct(s.roi)}</td>` +
+            `<td class="${cls}">${(s.lucro >= 0 ? '+' : '') + s.lucro.toFixed(0)}</td></tr>`;
+  }
+  html += `<tr style="border-top:2px solid var(--borda)"><td><b>Todas com stat</b></td><td>${fmtN(geral.n)}</td>` +
+          `<td>${fmtPct(geral.green)}</td><td>${fmtOdd(geral.justa)}</td>` +
+          `<td class="${geral.roi >= 0 ? 'pos' : 'neg'}">${(geral.roi >= 0 ? '+' : '') + fmtPct(geral.roi)}</td>` +
+          `<td class="${geral.roi >= 0 ? 'pos' : 'neg'}">${(geral.lucro >= 0 ? '+' : '') + geral.lucro.toFixed(0)}</td></tr>`;
+  el.innerHTML = `<div class="scroll"><table class="dados">${html}</table></div>`;
+}
+
 // ================= init =================
 (function init() {
   const total = ROWS.length;
@@ -505,6 +614,7 @@ function renderCobertura() {
   renderCalc();
   renderMapa();
   renderCobertura();
+  initStats();
 })();
 </script>
 </body>
@@ -513,15 +623,16 @@ function renderCobertura() {
 
 
 def main():
-    buckets, linhas = coletar()
+    buckets, linhas, stats_cols = coletar()
     if not linhas:
-        raise SystemExit("Nenhum CSV encontrado nas pastas 'under limite * entrada min *'.")
+        raise SystemExit("Nenhum CSV encontrado nas pastas 'under limite *'.")
 
     dados = {
         "gerado_em": __import__("datetime").date.today().isoformat(),
         "placares": PLACARES,
         "buckets": buckets,
         "rows": linhas,
+        "stats_cols": stats_cols,
     }
     html = HTML_TEMPLATE.replace(
         "/*__DATA__*/", json.dumps(dados, ensure_ascii=False, separators=(",", ":")))

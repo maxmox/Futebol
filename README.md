@@ -10,9 +10,11 @@
 ## Estrutura técnica
 
 - `analisar_backtests.py` lê todos os CSVs das pastas, remove duplicatas, e embute os dados como JSON em `index.html` (arquivo único, sem dependências).
-- Dados embutidos: `rows = [bucketIdx, minuto, odd, placarIdx, win]`, `buckets` (período ht/ft, faixa de minuto, n).
-- Página tem 3 seções: **Consulta rápida** (calculadora com chips; interpola winrate × minuto por período+placar, n≥50 por placar senão usa taxa geral), **Mapa de valor** (grade entrada×placar, toque abre detalhe com "lucrativo a partir de odd ≈ X" + ROI por faixa de odd), **Cobertura e lacunas** (gerada automaticamente dos buckets: janelas sem dados, placares fracos, extrapolações).
-- Constantes: STAKE=10, comissão 6,5%, alerta de odd suspeita +15% sobre a justa, placares = ['0-0','1-0','0-1','1-1'].
+- Dados embutidos: `rows = [bucketIdx, minuto, odd, placarIdx, win, extras?]`, `buckets` (período ht/ft, faixa de minuto, n), `stats_cols` (colunas extras encontradas nos CSVs).
+- **Colunas extras:** qualquer coluna além do padrão vira stat embutida (ex.: `CS Casa %`, `Win Fora %`, `OU 2.5 Pré`) — nomes normalizados para minúsculas/underscore. A seção **Análise por estatística** do site segmenta o ROI por tercil da stat (mín. 150 entradas com a stat preenchida).
+- Página tem 4 seções: **Consulta rápida** (calculadora com chips; interpola winrate × minuto por período+placar, n≥50 por placar senão usa taxa geral), **Mapa de valor** (grade entrada×placar, toque abre detalhe com "lucrativo a partir de odd ≈ X" + ROI por faixa de odd), **Análise por estatística** (só aparece quando há stats nos CSVs), **Cobertura e lacunas** (gerada automaticamente dos buckets: janelas sem dados, placares fracos, extrapolações).
+- Constantes: STAKE=10, comissão 6,5%, alerta de odd suspeita +15% sobre a justa.
+- **Convenção de pastas:** `Under Limite <ht|ft> - <descrição> - min X ao Y [- sufixo livre]`. O sufixo (ex.: "stats pre-live", "post gol") entra no label do bucket no mapa.
 
 ## Backtests atuais (27.243 entradas, gerado 2026-10-05)
 
@@ -34,4 +36,8 @@ Pastas com placares no nome ("Under Limite ft - Placares ... - min X ao Y") são
 
 - Interpolação linear entre buckets; janelas sem dados listadas na seção Cobertura.
 - HT placares 1x0/0x1/1x1 têm amostra quase nula nos min 15-36 (filtros do backtest) — calculadora usa taxa geral nesses casos.
-- Ideias futuras: backtests em minutos faltantes (ex.: FT 75, HT 30), filtros por liga, curva de comissão configurável.
+- **Roadmap de exploração (plano aprovado 2026-10-05):**
+  - Fase 1 — backtests de lacuna/confirmação: FT 85-86 (2x0/0x2 e goleadas), FT 0x0 min 75-76 e 90-91, HT 0x0 min 30-31 e 40-41. Exportar já com colunas de stats pré-live.
+  - Fase 2 — backtests de surpresa: flag de gol recente (`gol_ha`, `fav_marcou`) para testar o exagero de reação do mercado a gols.
+  - Fase 3 — cruzar células validadas com `ou25_pre`, `cs_casa/cs_fora`, `win_casa/win_fora` (seção Análise por estatística), máx. 3 stats por célula para conter múltiplos testes.
+- Ideias futuras: filtros por liga, curva de comissão configurável.
