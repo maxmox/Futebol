@@ -23,10 +23,10 @@ def coletar():
     buckets = []
     linhas = []
     vistos = set()
-    padrao = os.path.join(PASTA_BASE, "under limite * entrada min *")
+    padrao = os.path.join(PASTA_BASE, "under limite *")
     for pasta in sorted(glob.glob(padrao)):
         nome = os.path.basename(pasta)
-        m = re.search(r"under limite (ht|ft) entrada min\s+(\d+)\s+ao\s+(\d+)", nome)
+        m = re.search(r"under limite (ht|ft)\b.*?min\s+(\d+)\s+ao\s+(\d+)", nome, re.IGNORECASE)
         if not m:
             continue
         periodo = m.group(1)
