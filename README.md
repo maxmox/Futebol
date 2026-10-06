@@ -16,6 +16,15 @@
 - Constantes: STAKE=10, comissão 6,5%, alerta de odd suspeita +15% sobre a justa.
 - **Convenção de pastas:** `Under Limite <ht|ft> - <descrição> - min X ao Y [- sufixo livre]`. O sufixo (ex.: "stats pre-live", "post gol") entra no label do bucket no mapa.
 
+## Decisor de entrada (Jev)
+
+- Seção do site que combina o cálculo determinístico de backtest (odd justa, mínima, ROI — mesmo motor da calculadora) com o modelo de decisão **Jev** (TypeSafe AI), que classifica o contexto ao vivo como guardrail.
+- **Arquitetura:** os números são calculados em JS puro (o Jev é fraco em matemática); o Jev responde 3 perguntas numa chamada só (choice `risco` baixo/moderado/alto + noul `pressao` + noul `truncado`) e o código combina: `P(pressão) > 0,60` → EVITAR; risco alto → aguardar; risco baixo → veredito de backtest mantido.
+- **Via de acesso:** a API oficial da TypeSafe **bloqueia navegador (CORS)** — o site chama o mesmo modelo pela **OpenRouter Decisions API** (`typesafe/jev-latest`, `POST /api/alpha/decisions`). Custo ~US$ 0,00002/decisão.
+- **Chave:** cada usuário cola a própria OpenRouter key no site; fica só no localStorage do navegador, nunca no código/repositório.
+- **`jev_teste.py`:** testa prompts/perguntas novos localmente com a chave TypeSafe (`export TYPESAFE_API_KEY=... && python jev_teste.py "<cenario>" "<contexto>"`) — a chave TypeSafe só funciona fora do navegador.
+- Disclaimer na própria UI: o Jev classifica contexto, não prevê o jogo; nenhum modelo garante lucro.
+
 ## Backtests atuais (27.243 entradas, gerado 2026-10-05)
 
 HT: 15-16 (n=3.780), 25-26 (3.709), 35-36 (2.828), 42-43 (2.488, dois CSVs fundidos, focado em 0x0)

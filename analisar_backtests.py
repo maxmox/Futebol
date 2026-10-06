@@ -135,6 +135,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   select { width: 100%; background: #0d1220; border: 1px solid var(--borda); border-radius: 10px;
            color: var(--txt); font-size: .95rem; padding: 9px 10px; margin-bottom: 4px; }
   select:focus { outline: none; border-color: var(--azul); }
+  textarea { width: 100%; background: #0d1220; border: 1px solid var(--borda); border-radius: 10px;
+             color: var(--txt); font-size: .92rem; padding: 9px 10px; resize: vertical; font-family: inherit; }
+  textarea:focus { outline: none; border-color: var(--azul); }
+  .btn-jev { display: block; width: 100%; margin: 12px 0 4px; padding: 12px; border-radius: 10px; border: 1px solid var(--azul);
+             background: rgba(77,163,255,.12); color: var(--azul); font-size: 1rem; font-weight: 700; cursor: pointer; }
+  .btn-jev:hover { background: var(--azul); color: #0d1220; }
+  .btn-jev:disabled { opacity: .5; cursor: wait; }
+  details summary { cursor: pointer; color: var(--suave); font-size: .82rem; margin-top: 10px; }
+  details input { width: 100%; background: #0d1220; border: 1px solid var(--borda); border-radius: 10px;
+                  color: var(--txt); font-size: .9rem; padding: 8px 10px; margin: 8px 0 6px; }
+  details input:focus { outline: none; border-color: var(--azul); }
+  .btn-mini { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--borda); background: #0d1220;
+              color: var(--txt); font-size: .85rem; cursor: pointer; }
+  .btn-mini:hover { border-color: var(--azul); }
+  .jev-probs { font-size: .82rem; color: var(--suave); line-height: 1.7; margin-top: 8px; }
+  .jev-probs b { color: var(--txt); }
   .linha2 { display: flex; gap: 20px; flex-wrap: wrap; }
 
   .veredito { text-align: center; padding: 16px 14px; border-radius: 12px; font-size: 1.15rem;
@@ -270,6 +286,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       Cenários com menos de 150 entradas com a stat preenchida não são exibidos.
       <b>Cada segmentação é um teste a mais:</b> antes de concluir que uma faixa tem valor, lembre que múltiplos testes inflam falsos positivos —
       exija amostra grande e confirmação em forward-test.
+    </p>
+  </div>
+
+  <!-- ============ DECISOR JEV ============ -->
+  <div class="card">
+    <h2>Decisor de entrada (Jev)</h2>
+    <p class="nota" style="margin:0 0 10px">
+      Usa o <b>mesmo período, placar, minuto, odd e margem</b> da Consulta rápida acima. O cálculo de valor
+      (odd justa, mínima, ROI) é feito pelos dados de backtest; o <b>Jev</b> (modelo de decisão da TypeSafe AI)
+      classifica o contexto ao vivo e atua como guardrail. Sem contexto informado, ele julga só pelo cenário.
+    </p>
+    <div class="lbl">Contexto ao vivo (opcional)</div>
+    <textarea id="jevContexto" rows="2" placeholder="Ex.: visitante pressiona, 3 escanteios nos últimos 10 min, chance clara aos 78'..."></textarea>
+    <details>
+      <summary>Configuração da chave OpenRouter (necessária para o Jev avaliar)</summary>
+      <input id="jevKey" type="password" placeholder="sk-or-...  (openrouter.ai/keys)" autocomplete="off">
+      <button class="btn-mini" id="jevSalvarKey">Salvar no navegador</button>
+      <span id="jevKeyStatus" class="nota" style="display:inline"></span>
+      <p class="nota" style="margin:6px 0 0">
+        A chave fica apenas no <b>seu navegador</b> (localStorage) e vai direto à OpenRouter — nunca toca neste site nem em servidor nosso.
+        O Jev custa ~US$ 0,00002 por decisão. <b>A API da TypeSafe bloqueia chamadas de navegador (CORS)</b>, por isso usamos a OpenRouter,
+        que serve o mesmo modelo (<i>typesafe/jev-latest</i>).
+      </p>
+    </details>
+    <button class="btn-jev" id="jevConsultar">Consultar decisão</button>
+    <div id="jevVeredito"></div>
+    <div id="jevDetalhe"></div>
+    <p class="nota" style="margin:10px 0 0">
+      O Jev classifica contexto com probabilidade calibrada — não prevê o jogo. A decisão de valor vem dos dados de backtest
+      e nenhum modelo garante lucro: valide em forward-test antes de aumentar stake.
     </p>
   </div>
 
@@ -544,6 +590,187 @@ function renderCobertura() {
   $('lacunas').innerHTML = notas.map(n => `<li>${n}</li>`).join('');
 }
 
+// ================= decisor Jev =================
+const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
+const JEV_QUESTOES = {
+  risco: {
+    type: 'choice',
+    instructions: 'Qual o perfil de risco desta entrada under no mercado de gols, dado o cenário de backtest e o contexto ao vivo?',
+    criteria: {
+      baixo: 'contexto consistente com jogo truncado, sem sinais de pressão ofensiva',
+      moderado: 'alguma pressão, incerteza ou contexto vazio demais para cravar',
+      alto: 'pressão ofensiva clara, chance clara, pênalti, falta perigosa ou cartão vermelho'
+    }
+  },
+  pressao: {
+    type: 'noul',
+    instructions: 'O contexto ao vivo descreve pressão ofensiva relevante contra esta entrada under?'
+  },
+  truncado: {
+    type: 'noul',
+    instructions: 'O contexto ao vivo indica jogo truncado de baixa intensidade, consistente com a entrada under?'
+  }
+};
+const jevKey = () => localStorage.getItem('openrouter_key') || '';
+
+function initJev() {
+  if (jevKey()) $('jevKeyStatus').textContent = 'chave salva neste navegador.';
+  $('jevSalvarKey').onclick = () => {
+    const k = $('jevKey').value.trim();
+    if (!k) { localStorage.removeItem('openrouter_key'); $('jevKeyStatus').textContent = 'chave removida.'; return; }
+    localStorage.setItem('openrouter_key', k);
+    $('jevKey').value = '';
+    $('jevKeyStatus').textContent = 'chave salva neste navegador.';
+  };
+  $('jevConsultar').onclick = jevDecidir;
+}
+
+// números vêm do backtest (Jev é fraco em matemática — cálculo fica no código)
+function jevCenario() {
+  const min = parseFloat($('cMin').value), odd = parseFloat($('cOdd').value);
+  if (isNaN(min) || isNaN(odd) || odd < 1.01) return null;
+  const { pts } = pontosCalc(calc.periodo, calc.placar);
+  const { p, extra } = interpola(pts, min);
+  const justa = 1 / p;
+  const minima = justa * (1 + calc.margem);
+  // bucket medido mais próximo deste minuto (para n e ROI histórico reais, não interpolados)
+  let melhor = null;
+  BUCKETS.forEach((b, i) => {
+    if (b.periodo !== calc.periodo) return;
+    const s = resumo(rowsCenario(i, calc.placar));
+    if (s && (!melhor || Math.abs(b.centro - min) < Math.abs(melhor.centro - min)))
+      melhor = { centro: b.centro, label: b.label, n: s.n, green: s.green, roi: s.roi };
+  });
+  return {
+    min, odd, p, justa, minima, extra,
+    roiEsp: odd * p - 1,
+    alerta: odd >= justa * (1 + ALERTA),
+    hist: melhor
+  };
+}
+
+function jevVereditoDet(c) {
+  if (c.alerta) return { cls: 'v-amarelo', txt: '⚠ ODD SUSPEITA — muito acima da justa. Verifique o jogo ao vivo antes de entrar.' };
+  if (c.odd >= c.minima) return { cls: 'v-verde', txt: '✔ TEM VALOR — odd acima da mínima com margem (dados de backtest)' };
+  if (c.odd >= c.justa) return { cls: 'v-amarelo', txt: '◑ NO LIMITE — acima do breakeven, sem a margem de segurança' };
+  return { cls: 'v-vermelho', txt: '✖ SEM VALOR — odd abaixo da justa para este cenário' };
+}
+
+function jevMostra(c, detHtml) {
+  const v = jevVereditoDet(c);
+  $('jevVeredito').className = 'veredito ' + v.cls;
+  $('jevVeredito').textContent = v.txt;
+  let html = `<div class="metricas" style="margin-top:10px">
+    <div class="metrica"><div class="k">Green estimado</div><div class="v">${fmtPct(c.p)}</div></div>
+    <div class="metrica"><div class="k">Odd justa</div><div class="v">${fmtOdd(c.justa)}</div></div>
+    <div class="metrica"><div class="k">Odd mínima</div><div class="v">${fmtOdd(c.minima)}</div></div>
+    <div class="metrica"><div class="k">ROI esperado</div><div class="v" style="color:${c.roiEsp >= 0 ? 'var(--verde)' : 'var(--vermelho)'}">${(c.roiEsp >= 0 ? '+' : '') + fmtPct(c.roiEsp)}</div></div>
+  </div>`;
+  if (c.hist) html += `<div class="fonte">Âncora medida mais próxima: ${c.hist.label} · n=${fmtN(c.hist.n)} · green ${fmtPct(c.hist.green)} · ROI hist. ${(c.hist.roi >= 0 ? '+' : '') + fmtPct(c.hist.roi)}${c.extra ? ' · <b>minuto fora da faixa medida (extrapolação)</b>' : ''}</div>`;
+  if (detHtml) html += detHtml;
+  $('jevDetalhe').innerHTML = html;
+}
+
+function jevMsgErro(status, data) {
+  const msg = (data && (data.error && (data.error.message || data.error.code))) || '';
+  if (status === 401) return 'Chave OpenRouter inválida (401). Confira em Configuração.';
+  if (status === 402) return 'Créditos esgotados na OpenRouter (402).';
+  if (status === 422) return 'Requisição rejeitada (422): ' + msg;
+  if (status === 429) return 'Limite de requisições (429) — tente em instantes.';
+  if (status === 529) return 'API saturada (529) — tente em instantes.';
+  return 'Erro ' + status + (msg ? ': ' + msg : '');
+}
+
+async function jevChamar(state, tentativa) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const resp = await fetch(JEV_URL, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Authorization': 'Bearer ' + jevKey(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'typesafe/jev-latest', state, questions: JEV_QUESTOES })
+    });
+    if ((resp.status === 429 || resp.status === 529) && !tentativa) {
+      await new Promise(r => setTimeout(r, 2000));
+      return jevChamar(state, true);
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { erro: jevMsgErro(resp.status, data) };
+    const ans = data.answers || (data.output && data.output.answers) || (data.decision && data.decision.answers) || null;
+    if (!ans || !ans.risco || !ans.pressao) return { erro: 'Resposta fora do formato esperado (endpoint alpha pode ter mudado).' };
+    return { ans };
+  } catch (e) {
+    return { erro: e.name === 'AbortError' ? 'Tempo esgotado (15s) — API não respondeu.' : 'Falha de rede ou CORS bloqueado.' };
+  } finally { clearTimeout(to); }
+}
+
+async function jevDecidir() {
+  const c = jevCenario();
+  if (!c) { $('jevVeredito').className = 'veredito v-amarelo'; $('jevVeredito').textContent = 'Preencha minuto e odd na Consulta rápida acima.'; return; }
+  const ctx = $('jevContexto').value.trim();
+
+  // decisão puramente matemática: não gasta chamada quando a odd está muito abaixo da justa
+  if (c.odd < c.justa * 0.9) {
+    jevMostra(c, `<div class="fonte">Jev não consultado: a odd está tão abaixo da justa que o veredito é matemático — contexto nenhum o tornaria lucrativo.</div>`);
+    return;
+  }
+  if (!jevKey()) {
+    jevMostra(c, `<div class="fonte">⚠ Sem chave OpenRouter, o Jev não avalia o contexto. Salve a chave em Configuração — o veredito acima é só o cálculo de backtest.</div>`);
+    return;
+  }
+
+  $('jevConsultar').disabled = true;
+  $('jevVeredito').className = 'veredito';
+  $('jevVeredito').textContent = 'Consultando Jev…';
+  const state = {
+    cenario: `${calc.periodo.toUpperCase()} min ${Math.round(c.min)} placar ${placarFmt(calc.placar)}`,
+    odd_oferecida: c.odd,
+    odd_justa_backtest: +c.justa.toFixed(2),
+    taxa_green_historica: +c.p.toFixed(3),
+    entradas_na_ancora: c.hist ? c.hist.n : 0,
+    roi_historico_ancora: c.hist ? +c.hist.roi.toFixed(3) : null,
+    odd_suspeita: c.alerta,
+    contexto_ao_vivo: ctx || 'sem contexto informado — julgar apenas pelo cenário'
+  };
+  const { ans, erro } = await jevChamar(state, false);
+  $('jevConsultar').disabled = false;
+
+  if (erro) {
+    jevMostra(c, `<div class="veredito v-amarelo" style="margin:10px 0 0">Jev indisponível: ${erro}<br>Veredito abaixo é só o cálculo determinístico de backtest.</div>`);
+    return;
+  }
+
+  const pressao = ans.pressao.noul, truncado = ans.truncado ? ans.truncado.noul : null;
+  const risco = ans.risco.choice;
+  let cls, txt, regra;
+  if (pressao > 0.60) {
+    cls = 'v-vermelho'; txt = '✖ EVITAR — o contexto indica pressão contra a entrada';
+    regra = `guardrail: P(pressão) = ${pressao.toFixed(2)} > 0,60`;
+  } else if (risco === 'alto') {
+    cls = 'v-amarelo'; txt = '◑ AGUARDE / VERIFIQUE — Jev classificou risco alto';
+    regra = `risco = alto (confiança ${(ans.risco.confidence || 0).toFixed(2)})`;
+  } else if (risco === 'moderado') {
+    cls = 'v-amarelo';
+    txt = c.odd >= c.minima ? '◑ NO LIMITE — valor existe, mas exija contexto limpo' : jevVereditoDet(c).txt.replace(/^◑\s*/, '');
+    regra = `risco = moderado (confiança ${(ans.risco.confidence || 0).toFixed(2)})`;
+  } else {
+    const v = jevVereditoDet(c);
+    cls = v.cls; txt = v.txt + ' — contexto validado pelo Jev';
+    regra = `risco = baixo (confiança ${(ans.risco.confidence || 0).toFixed(2)})`;
+  }
+
+  $('jevVeredito').className = 'veredito ' + cls;
+  $('jevVeredito').textContent = txt;
+  const probs = ans.risco.probabilities || {};
+  const probTxt = Object.entries(probs).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' · ');
+  const detHtml = `<div class="jev-probs">
+    <b>Jev:</b> ${regra}<br>
+    <b>P(pressão):</b> ${(pressao * 100).toFixed(0)}%${truncado !== null ? ` · <b>P(jogo truncado):</b> ${(truncado * 100).toFixed(0)}%` : ''}<br>
+    <b>Distribuição de risco:</b> ${probTxt}
+  </div>`;
+  jevMostra(c, detHtml);
+}
+
 // ================= análise por estatística =================
 const extrasDe = r => r[5] || {};
 let CENARIOS_STATS = [];
@@ -615,6 +842,7 @@ function renderStats() {
   renderMapa();
   renderCobertura();
   initStats();
+  initJev();
 })();
 </script>
 </body>
