@@ -132,6 +132,7 @@
   <div class="abas">
     <div class="aba on" id="tabDash" onclick="trocaAba('dash')">Dashboard</div>
     <div class="aba" id="tabLive" onclick="trocaAba('live')">Ao vivo (Jev)</div>
+    <div class="aba" id="tabCfg" onclick="trocaAba('cfg')">Chave API</div>
   </div>
 
   <div id="abaDash">
@@ -224,17 +225,7 @@
     </p>
     <div class="lbl">Contexto ao vivo (opcional)</div>
     <textarea id="jevContexto" rows="2" placeholder="Ex.: visitante pressiona, 3 escanteios nos últimos 10 min, chance clara aos 78'..."></textarea>
-    <details>
-      <summary>Configuração da chave OpenRouter (necessária para o Jev avaliar)</summary>
-      <input id="jevKey" type="password" placeholder="sk-or-...  (openrouter.ai/keys)" autocomplete="off">
-      <button class="btn-mini" id="jevSalvarKey">Salvar no navegador</button>
-      <span id="jevKeyStatus" class="nota" style="display:inline"></span>
-      <p class="nota" style="margin:6px 0 0">
-        A chave fica apenas no <b>seu navegador</b> (localStorage) e vai direto à OpenRouter — nunca toca neste site nem em servidor nosso.
-        O Jev custa ~US$ 0,00002 por decisão. <b>A API da TypeSafe bloqueia chamadas de navegador (CORS)</b>, por isso usamos a OpenRouter,
-        que serve o mesmo modelo (<i>typesafe/jev-latest</i>).
-      </p>
-    </details>
+    <p class="nota" style="margin:6px 0 0">Sem chave salva, o decisor usa só o cálculo de backtest. Configure a chave na aba <b>Chave API</b> acima.</p>
     <button class="btn-jev" id="jevConsultar">Consultar decisão</button>
     <div id="jevVeredito"></div>
     <div id="jevDetalhe"></div>
@@ -353,6 +344,30 @@
   </div>
 
   </div><!-- /abaLive -->
+
+  <!-- ============ ABA CHAVE API ============ -->
+  <div id="abaCfg" style="display:none">
+  <div class="card">
+    <h2>Chave de API do Jev</h2>
+    <p class="nota" style="margin:0 0 10px">
+      A chave fica apenas no <b>seu navegador</b> (localStorage) e vai direto ao provedor — nunca toca neste site,
+      no repositório ou em servidor nosso. Custo ~US$ 0,00002 por decisão.
+    </p>
+    <input id="cfgKey" type="password" placeholder="Cole a chave aqui..." autocomplete="off"
+           style="width:100%;background:#0d1220;border:1px solid var(--borda);border-radius:10px;color:var(--txt);font-size:.95rem;padding:10px;margin-bottom:8px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-mini" id="cfgSalvar">Salvar neste navegador</button>
+      <button class="btn-mini" id="cfgRemover">Remover</button>
+      <button class="btn-mini" id="cfgTestar">Testar conexão</button>
+    </div>
+    <div id="cfgStatus" class="jev-probs" style="margin-top:10px"></div>
+    <p class="nota" style="margin:10px 0 0">
+      <b>Chave OpenRouter</b> (começa com <code>sk-or-...</code>, crie em openrouter.ai/keys): funciona do navegador — <b>recomendada</b>.<br>
+      <b>Chave TypeSafe</b> (começa com <code>apikey_...</code>, do console.typesafe.ai): a API oficial <b>bloqueia chamadas de navegador (CORS)</b> —
+      o site detecta e avisa; ela funciona em scripts locais (jev_teste.py), mas não aqui. Mesmo modelo Jev nos dois provedores.
+    </p>
+  </div>
+  </div><!-- /abaCfg -->
 </main>
 
 <script>
@@ -616,15 +631,38 @@ const JEV_QUESTOES = {
   }
 };
 const jevKey = () => localStorage.getItem('openrouter_key') || '';
+const cfgTipoChave = k => !k ? '' : k.startsWith('apikey_') ? 'typesafe' : k.startsWith('sk-or') ? 'openrouter' : 'desconhecida';
 
-function initJev() {
-  if (jevKey()) $('jevKeyStatus').textContent = 'chave salva neste navegador.';
-  $('jevSalvarKey').onclick = () => {
-    const k = $('jevKey').value.trim();
-    if (!k) { localStorage.removeItem('openrouter_key'); $('jevKeyStatus').textContent = 'chave removida.'; return; }
+function cfgStatus() {
+  const k = jevKey(), tipo = cfgTipoChave(k), el = $('cfgStatus');
+  if (!k) { el.innerHTML = 'Nenhuma chave salva neste navegador.'; return; }
+  const mascara = k.slice(0, 12) + '…' + k.slice(-4);
+  if (tipo === 'typesafe')
+    el.innerHTML = `<b>Chave TypeSafe salva</b> (${mascara}). Atenção: a API da TypeSafe bloqueia chamadas de navegador (CORS) — as consultas do site vão falhar. Use uma chave OpenRouter aqui; a TypeSafe serve no jev_teste.py local.`;
+  else if (tipo === 'openrouter')
+    el.innerHTML = `<b>Chave OpenRouter salva</b> (${mascara}). Pronta para usar no Decisor e na aba Ao vivo.`;
+  else
+    el.innerHTML = `<b>Chave salva</b> (${mascara}) — formato não reconhecido; será tratada como OpenRouter.`;
+}
+
+function initCfg() {
+  cfgStatus();
+  $('cfgSalvar').onclick = () => {
+    const k = $('cfgKey').value.trim();
+    if (!k) { cfgStatus(); return; }
     localStorage.setItem('openrouter_key', k);
-    $('jevKey').value = '';
-    $('jevKeyStatus').textContent = 'chave salva neste navegador.';
+    $('cfgKey').value = '';
+    cfgStatus();
+  };
+  $('cfgRemover').onclick = () => { localStorage.removeItem('openrouter_key'); $('cfgKey').value = ''; cfgStatus(); };
+  $('cfgTestar').onclick = async () => {
+    if (!jevKey()) { $('cfgStatus').innerHTML = 'Salve uma chave primeiro.'; return; }
+    if (cfgTipoChave(jevKey()) === 'typesafe') { $('cfgStatus').innerHTML = '<b>Falha esperada:</b> chave TypeSafe — a API oficial não aceita chamadas de navegador (CORS).'; return; }
+    $('cfgStatus').innerHTML = 'Testando…';
+    const r = await jevChamar({ teste: 'conexao' }, { ping: { type: 'noul', instructions: 'Este texto é um teste de conexão?' } }, false);
+    $('cfgStatus').innerHTML = r.erro
+      ? `<b>Falhou:</b> ${r.erro}`
+      : `<b>Conectado.</b> Resposta do Jev recebida (P(teste)=${((r.ans.ping && r.ans.ping.noul != null) ? r.ans.ping.noul.toFixed(2) : 'ok')}).`;
   };
   $('jevConsultar').onclick = jevDecidir;
 }
@@ -686,13 +724,16 @@ function jevMsgErro(status, data) {
 }
 
 async function jevChamar(state, questions, tentativa) {
+  const tipo = cfgTipoChave(jevKey());
+  const url = tipo === 'typesafe' ? 'https://api.typesafe.ai/v1/systemone' : JEV_URL;
+  const model = tipo === 'typesafe' ? 'jev-latest' : 'typesafe/jev-latest';
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), 15000);
   try {
-    const resp = await fetch(JEV_URL, {
+    const resp = await fetch(url, {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Authorization': 'Bearer ' + jevKey(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'typesafe/jev-latest', state, questions })
+      body: JSON.stringify({ model, state, questions })
     });
     if ((resp.status === 429 || resp.status === 529) && !tentativa) {
       await new Promise(r => setTimeout(r, 2000));
@@ -779,8 +820,10 @@ async function jevDecidir() {
 function trocaAba(qual) {
   $('abaDash').style.display = qual === 'dash' ? '' : 'none';
   $('abaLive').style.display = qual === 'live' ? '' : 'none';
+  $('abaCfg').style.display = qual === 'cfg' ? '' : 'none';
   $('tabDash').className = 'aba' + (qual === 'dash' ? ' on' : '');
   $('tabLive').className = 'aba' + (qual === 'live' ? ' on' : '');
+  $('tabCfg').className = 'aba' + (qual === 'cfg' ? ' on' : '');
 }
 
 // ================= precificação ao vivo (Poisson + Jev) =================
@@ -914,7 +957,7 @@ async function lvPrecificar() {
                 `<b>Ajuste aplicado ao λ:</b> ameaça ×${multAmeaca.toFixed(2)} · ritmo ×${multRitmo.toFixed(2)} · truncado ×${multTrunc.toFixed(2)} → <b>×${mult.toFixed(2)}</b>`;
     }
   } else {
-    jevHtml = '<b>Sem chave OpenRouter:</b> precificação sem ajuste de contexto (só tempo + odd pré). Configure a chave na aba Dashboard.';
+    jevHtml = '<b>Sem chave de API:</b> precificação sem ajuste de contexto (só tempo + odd pré). Configure a chave na aba <b>Chave API</b>.';
   }
 
   const final = precoUnder(lamTotal, min, linha, gols, mult);
@@ -1035,7 +1078,7 @@ function renderStats() {
   renderMapa();
   renderCobertura();
   initStats();
-  initJev();
+  initCfg();
   initLive();
 })();
 </script>
