@@ -25,6 +25,13 @@
 - **`jev_teste.py`:** testa prompts/perguntas novos localmente com a chave TypeSafe (`export TYPESAFE_API_KEY=... && python jev_teste.py "<cenario>" "<contexto>"`) — a chave TypeSafe só funciona fora do navegador.
 - Disclaimer na própria UI: o Jev classifica contexto, não prevê o jogo; nenhum modelo garante lucro.
 
+## Aba "Ao vivo" (precificação do under)
+
+- Aba ao lado do Dashboard: o usuário insere o estado do jogo (placar, minuto, odds live/pré + linha, probabilidades projetadas, indicadores de pressão APPM/CG/PI/xG, volume de jogo, contexto livre) e recebe **odd justa do under no momento**, **curva de queda da odd nos próximos 5 min** (%/min) e **veredito EV+ / limite / EV−**.
+- **Motor:** Poisson com λ extraído da odd under pré-live (ou do % over 2.5 projetado, se informado) × decaimento `t^0,84`; o **Jev** classifica o contexto (ameaça baixa/moderada/alta, ritmo lento/normal/acelerado, noul truncado, noul pressão desbalanceada) e as probabilidades viram multiplicador sobre o λ (×0,55 a ×1,70). O Jev não faz conta — quem precifica é o código; o Jev ajusta o contexto que os backtests não medem.
+- Mostra também o **comparador com backtest** (justa da célula do mapa vs justa do modelo+Jev, com % de divergência) quando existe célula para o placar/minuto.
+- **Não validada em forward-test** — marcada como heurística na própria UI; calibração do multiplicador vem depois, com uso registrado.
+
 ## Backtests atuais (27.243 entradas, gerado 2026-10-05)
 
 HT: 15-16 (n=3.780), 25-26 (3.709), 35-36 (2.828), 42-43 (2.488, dois CSVs fundidos, focado em 0x0)

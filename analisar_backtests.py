@@ -153,6 +153,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .jev-probs b { color: var(--txt); }
   .linha2 { display: flex; gap: 20px; flex-wrap: wrap; }
 
+  /* abas */
+  .abas { display: flex; gap: 8px; margin-bottom: 14px; }
+  .aba { flex: 1; text-align: center; padding: 11px; border-radius: 12px; border: 1px solid var(--borda);
+         background: #0d1220; color: var(--suave); cursor: pointer; font-size: .95rem; font-weight: 700; }
+  .aba.on { background: var(--azul); color: #0d1220; border-color: var(--azul); }
+
+  /* form ao vivo */
+  .grade-entradas { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px,1fr)); gap: 8px; }
+  .gi { background: #0d1220; border: 1px solid var(--borda); border-radius: 10px; padding: 6px 8px; }
+  .gi .k { font-size: .62rem; color: var(--suave); text-transform: uppercase; letter-spacing: .4px; }
+  .gi input { width: 100%; background: transparent; border: none; color: var(--txt);
+              font-size: 1.05rem; font-weight: 700; padding: 2px 0 0; }
+  .gi input:focus { outline: none; }
+  .gi:focus-within { border-color: var(--azul); }
+
   .veredito { text-align: center; padding: 16px 14px; border-radius: 12px; font-size: 1.15rem;
               font-weight: 800; margin: 14px 0; line-height: 1.35; }
   .v-verde  { background: rgba(46,204,113,.14); color: var(--verde); border: 1px solid var(--verde); }
@@ -210,6 +225,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <main>
   <h1>Under Limite — Calculadora de Entrada</h1>
   <div class="sub" id="resumoDados"></div>
+
+  <div class="abas">
+    <div class="aba on" id="tabDash" onclick="trocaAba('dash')">Dashboard</div>
+    <div class="aba" id="tabLive" onclick="trocaAba('live')">Ao vivo (Jev)</div>
+  </div>
+
+  <div id="abaDash">
 
   <!-- ============ CALCULADORA ============ -->
   <div class="card">
@@ -349,6 +371,85 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <b>Atualização:</b> novos CSVs nas pastas + rodar <b>analisar_backtests.py</b> regeneram este site.
     </p>
   </div>
+  </div><!-- /abaDash -->
+
+  <!-- ============ ABA AO VIVO ============ -->
+  <div id="abaLive" style="display:none">
+
+  <div class="card">
+    <h2>Estado do jogo ao vivo</h2>
+    <p class="nota" style="margin:0 0 10px">Preencha com os dados da tela ao vivo (Fut Odds). Campos de pressão e probabilidades são opcionais, mas melhoram a avaliação do Jev.</p>
+
+    <div class="lbl">Jogo</div>
+    <div class="grade-entradas">
+      <div class="gi"><div class="k">Gols casa</div><input id="lvGolsC" type="number" min="0" value="0"></div>
+      <div class="gi"><div class="k">Gols fora</div><input id="lvGolsF" type="number" min="0" value="0"></div>
+      <div class="gi"><div class="k">Minuto</div><input id="lvMin" type="number" min="0" max="95" value="70"></div>
+    </div>
+
+    <div class="lbl">Odds do under</div>
+    <div class="grade-entradas">
+      <div class="gi"><div class="k">Odd live</div><input id="lvOddLive" type="number" step="0.01" min="1.01" value="1.80"></div>
+      <div class="gi"><div class="k">Odd pré-live</div><input id="lvOddPre" type="number" step="0.01" min="1.01" value="2.00"></div>
+      <div class="gi"><div class="k">Linha (gols)</div><input id="lvLinha" type="number" step="0.5" min="0.5" max="8.5" value="2.5"></div>
+    </div>
+
+    <div class="lbl">Probabilidades projetadas % (opcional)</div>
+    <div class="grade-entradas">
+      <div class="gi"><div class="k">Vitória casa</div><input id="lvWinC" type="number" min="0" max="100" placeholder="—"></div>
+      <div class="gi"><div class="k">Empate</div><input id="lvEmp" type="number" min="0" max="100" placeholder="—"></div>
+      <div class="gi"><div class="k">Vitória fora</div><input id="lvWinF" type="number" min="0" max="100" placeholder="—"></div>
+      <div class="gi"><div class="k">Over 2.5 pré</div><input id="lvOver25" type="number" min="0" max="100" placeholder="—"></div>
+    </div>
+
+    <div class="lbl">Indicadores de pressão (opcional)</div>
+    <div class="grade-entradas">
+      <div class="gi"><div class="k">APPM</div><input id="lvAPPM" type="number" step="0.01" placeholder="—"></div>
+      <div class="gi"><div class="k">APPM10</div><input id="lvAPPM10" type="number" step="0.01" placeholder="—"></div>
+      <div class="gi"><div class="k">CG</div><input id="lvCG" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">CG10</div><input id="lvCG10" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">PI1</div><input id="lvPI1" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">PI2</div><input id="lvPI2" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">PI3</div><input id="lvPI3" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">xG ao vivo</div><input id="lvXG" type="number" step="0.1" placeholder="—"></div>
+    </div>
+
+    <div class="lbl">Volume de jogo (opcional)</div>
+    <div class="grade-entradas">
+      <div class="gi"><div class="k">Posse casa %</div><input id="lvPosse" type="number" min="0" max="100" placeholder="—"></div>
+      <div class="gi"><div class="k">Atq. perig. casa</div><input id="lvAPC" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">Atq. perig. fora</div><input id="lvAPF" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">Finaliz. casa</div><input id="lvFinC" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">Finaliz. fora</div><input id="lvFinF" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">Escant. casa</div><input id="lvEscC" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">Escant. fora</div><input id="lvEscF" type="number" placeholder="—"></div>
+    </div>
+
+    <div class="lbl">Contexto livre (opcional)</div>
+    <textarea id="lvCtx" rows="2" placeholder="Ex.: expulso aos 60', chuva forte, pênalti defendido, goleiro sentindo..."></textarea>
+
+    <div class="lbl">Margem de segurança</div>
+    <div class="chips" id="lvMargens"></div>
+
+    <button class="btn-jev" id="lvPrecificar">Precificar under</button>
+  </div>
+
+  <div class="card" id="lvResultado" style="display:none">
+    <h2>Precificação</h2>
+    <div id="lvVeredito"></div>
+    <div class="metricas" id="lvMetricas" style="margin-top:10px"></div>
+    <div class="lbl" style="margin-top:14px">Queda esperada da odd justa nos próximos minutos</div>
+    <table class="dados" id="lvDecaimento"></table>
+    <div id="lvBacktest" class="fonte" style="margin-top:10px"></div>
+    <div id="lvJev" class="jev-probs"></div>
+    <p class="nota" style="margin:10px 0 0">
+      Precificação heurística: Poisson (λ da odd pré-live) × decaimento t^0,84 × ajuste de contexto do Jev.
+      <b>Ainda não validada em forward-test</b> — não substitui os backtests até ser auditada.
+      O Jev não gera números; ele classifica o contexto que o código usa para ajustar o modelo.
+    </p>
+  </div>
+
+  </div><!-- /abaLive -->
 </main>
 
 <script>
@@ -681,23 +782,23 @@ function jevMsgErro(status, data) {
   return 'Erro ' + status + (msg ? ': ' + msg : '');
 }
 
-async function jevChamar(state, tentativa) {
+async function jevChamar(state, questions, tentativa) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), 15000);
   try {
     const resp = await fetch(JEV_URL, {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Authorization': 'Bearer ' + jevKey(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'typesafe/jev-latest', state, questions: JEV_QUESTOES })
+      body: JSON.stringify({ model: 'typesafe/jev-latest', state, questions })
     });
     if ((resp.status === 429 || resp.status === 529) && !tentativa) {
       await new Promise(r => setTimeout(r, 2000));
-      return jevChamar(state, true);
+      return jevChamar(state, questions, true);
     }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) return { erro: jevMsgErro(resp.status, data) };
     const ans = data.answers || (data.output && data.output.answers) || (data.decision && data.decision.answers) || null;
-    if (!ans || !ans.risco || !ans.pressao) return { erro: 'Resposta fora do formato esperado (endpoint alpha pode ter mudado).' };
+    if (!ans) return { erro: 'Resposta fora do formato esperado (endpoint alpha pode ter mudado).' };
     return { ans };
   } catch (e) {
     return { erro: e.name === 'AbortError' ? 'Tempo esgotado (15s) — API não respondeu.' : 'Falha de rede ou CORS bloqueado.' };
@@ -732,11 +833,11 @@ async function jevDecidir() {
     odd_suspeita: c.alerta,
     contexto_ao_vivo: ctx || 'sem contexto informado — julgar apenas pelo cenário'
   };
-  const { ans, erro } = await jevChamar(state, false);
+  const { ans, erro } = await jevChamar(state, JEV_QUESTOES, false);
   $('jevConsultar').disabled = false;
 
-  if (erro) {
-    jevMostra(c, `<div class="veredito v-amarelo" style="margin:10px 0 0">Jev indisponível: ${erro}<br>Veredito abaixo é só o cálculo determinístico de backtest.</div>`);
+  if (erro || !ans.risco || !ans.pressao) {
+    jevMostra(c, `<div class="veredito v-amarelo" style="margin:10px 0 0">Jev indisponível: ${erro || 'resposta sem os campos esperados'}<br>Veredito abaixo é só o cálculo determinístico de backtest.</div>`);
     return;
   }
 
@@ -769,6 +870,195 @@ async function jevDecidir() {
     <b>Distribuição de risco:</b> ${probTxt}
   </div>`;
   jevMostra(c, detHtml);
+}
+
+// ================= abas =================
+function trocaAba(qual) {
+  $('abaDash').style.display = qual === 'dash' ? '' : 'none';
+  $('abaLive').style.display = qual === 'live' ? '' : 'none';
+  $('tabDash').className = 'aba' + (qual === 'dash' ? ' on' : '');
+  $('tabLive').className = 'aba' + (qual === 'live' ? ' on' : '');
+}
+
+// ================= precificação ao vivo (Poisson + Jev) =================
+// motor determinístico: λ vem da odd pré-live (ou do % over 2.5 projetado) e decai com t^0,84
+function poisPMF(k, l) { return Math.exp(-l) * Math.pow(l, k) / fat(k); }
+function poisCDF(k, l) { let s = 0; for (let i = 0; i <= k; i++) s += poisPMF(i, l); return Math.min(s, 1); }
+function fat(n) { let r = 1; for (let i = 2; i <= n; i++) r *= i; return r; }
+
+function lambdaDaProb(pUnder, linha) {
+  const kMax = Math.floor(linha);
+  let lo = 0.05, hi = 8;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (poisCDF(kMax, mid) > pUnder) lo = mid; else hi = mid; // λ maior → under menos provável
+  }
+  return (lo + hi) / 2;
+}
+const lambdaRestante = (lamTotal, min) => lamTotal * Math.pow(Math.max(0.5, 95 - min) / 95, 0.84);
+
+function precoUnder(lamTotal, min, linha, golsAtuais, mult) {
+  const permitidos = Math.floor(linha) - golsAtuais; // gols que ainda cabem
+  if (permitidos < 0) return { p: 0, odd: Infinity };
+  const lam = lambdaRestante(lamTotal, min) * (mult || 1);
+  const p = poisCDF(permitidos, lam);
+  return { p, odd: p > 0 ? 1 / p : Infinity };
+}
+
+const LV_QUESTOES = {
+  ameaca: {
+    type: 'choice',
+    instructions: 'Qual o nível de ameaça de gol nos próximos minutos, dados placar, minuto, indicadores de pressão e probabilidades?',
+    criteria: {
+      baixa: 'jogo controlado, pouca criação, sem pressão ofensiva relevante',
+      moderada: 'alguma criação e pressão, mas sem domínio claro nem chances claras frequentes',
+      alta: 'pressão ofensiva forte, chances claras, pênalti, falta perigosa, expulsão ou time desesperado'
+    }
+  },
+  ritmo: {
+    type: 'choice',
+    instructions: 'Qual o ritmo ofensivo atual da partida?',
+    criteria: { lento: 'jogo parado ou cadenciado', normal: 'ritmo médio de liga', acelerado: 'trocas de ataque intensas' }
+  },
+  truncado: {
+    type: 'noul',
+    instructions: 'O jogo está truncado, com baixa criação de chances pelos dois lados?'
+  },
+  pressao_desbalanceada: {
+    type: 'noul',
+    instructions: 'Um time pressiona muito mais que o outro neste momento?'
+  }
+};
+
+const lvNum = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
+let lvMargem = 0.05;
+
+function initLive() {
+  chipsDo('lvMargens', [{ label: '0%', v: 0 }, { label: '5%', v: .05 }, { label: '10%', v: .10 }],
+    it => lvMargem === it.v, it => { lvMargem = it.v; });
+  $('lvPrecificar').onclick = lvPrecificar;
+}
+
+async function lvPrecificar() {
+  const golsC = lvNum('lvGolsC'), golsF = lvNum('lvGolsF'), min = lvNum('lvMin');
+  const oddLive = lvNum('lvOddLive'), oddPre = lvNum('lvOddPre'), linha = lvNum('lvLinha');
+  if (golsC === null || golsF === null || min === null || !oddLive || !oddPre || !linha) {
+    $('lvResultado').style.display = '';
+    $('lvVeredito').className = 'veredito v-amarelo';
+    $('lvVeredito').textContent = 'Preencha gols, minuto, odds e linha.';
+    return;
+  }
+  const gols = golsC + golsF;
+  if (Math.floor(linha) - gols < 0) {
+    $('lvResultado').style.display = '';
+    $('lvVeredito').className = 'veredito v-vermelho';
+    $('lvVeredito').textContent = 'Under já perdido — o placar passou da linha.';
+    $('lvMetricas').innerHTML = ''; $('lvDecaimento').innerHTML = ''; $('lvBacktest').innerHTML = ''; $('lvJev').innerHTML = '';
+    return;
+  }
+
+  // λ base: prioriza o % over 2.5 projetado se informado (sem margem da casa)
+  const over25 = lvNum('lvOver25');
+  let lamTotal, fonteLam;
+  if (over25 !== null) {
+    lamTotal = lambdaDaProb(1 - over25 / 100, 2.5);
+    fonteLam = `% over 2.5 projetado (${over25}%)`;
+  } else {
+    lamTotal = lambdaDaProb(1 / oddPre, linha);
+    fonteLam = `odd under ${linha} pré-live (${oddPre}) — inclui margem da casa`;
+  }
+
+  const base = precoUnder(lamTotal, min, linha, gols, 1);
+
+  // coleta do estado p/ o Jev
+  const estado = {
+    placar: `${golsC}x${golsF}`, minuto: min, linha_under: linha,
+    odd_live: oddLive, odd_pre: oddPre,
+    odd_base_modelo: +base.odd.toFixed(3),
+    lambda_total_estimado: +lamTotal.toFixed(2),
+    probs_pct: { vitoria_casa: lvNum('lvWinC'), empate: lvNum('lvEmp'), vitoria_fora: lvNum('lvWinF'), over_25_pre: over25 },
+    pressao: { appm: lvNum('lvAPPM'), appm10: lvNum('lvAPPM10'), cg: lvNum('lvCG'), cg10: lvNum('lvCG10'),
+               pi1: lvNum('lvPI1'), pi2: lvNum('lvPI2'), pi3: lvNum('lvPI3'), xg: lvNum('lvXG') },
+    volume: { posse_casa: lvNum('lvPosse'), ataques_perigosos_casa: lvNum('lvAPC'), ataques_perigosos_fora: lvNum('lvAPF'),
+              finalizacoes_casa: lvNum('lvFinC'), finalizacoes_fora: lvNum('lvFinF'), escanteios_casa: lvNum('lvEscC'), escanteios_fora: lvNum('lvEscF') },
+    contexto: $('lvCtx').value.trim() || null
+  };
+
+  // consulta Jev (se houver chave)
+  let mult = 1, jevHtml = '', ans = null;
+  if (jevKey()) {
+    $('lvPrecificar').disabled = true;
+    $('lvPrecificar').textContent = 'Consultando Jev…';
+    const r = await jevChamar(estado, LV_QUESTOES, false);
+    $('lvPrecificar').disabled = false;
+    $('lvPrecificar').textContent = 'Precificar under';
+    if (r.erro || !r.ans.ameaca) {
+      jevHtml = `<b>Jev indisponível:</b> ${r.erro || 'resposta sem os campos esperados'} — mostrando só o modelo base.`;
+    } else {
+      ans = r.ans;
+      const pa = ans.ameaca.probabilities || {};
+      const pr = ans.ritmo ? (ans.ritmo.probabilities || {}) : {};
+      const multAmeaca = 0.80 * (pa.baixa || 0) + 1.00 * (pa.moderada || 0) + 1.40 * (pa.alta || 0);
+      const multRitmo = 0.90 * (pr.lento || 0) + 1.00 * (pr.normal || 0) + 1.15 * (pr.acelerado || 0);
+      const multTrunc = 1 - 0.15 * (ans.truncado ? ans.truncado.noul : 0);
+      mult = Math.min(1.70, Math.max(0.55, multAmeaca * multRitmo * multTrunc));
+      const txtAmeaca = Object.entries(pa).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' · ');
+      const txtRitmo = Object.entries(pr).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' · ');
+      jevHtml = `<b>Jev — ameaça de gol:</b> ${ans.ameaca.choice} (${txtAmeaca})<br>` +
+                (txtRitmo ? `<b>Ritmo:</b> ${ans.ritmo.choice} (${txtRitmo})<br>` : '') +
+                `<b>P(truncado):</b> ${((ans.truncado ? ans.truncado.noul : 0) * 100).toFixed(0)}% · ` +
+                `<b>P(pressão desbalanceada):</b> ${((ans.pressao_desbalanceada ? ans.pressao_desbalanceada.noul : 0) * 100).toFixed(0)}%<br>` +
+                `<b>Ajuste aplicado ao λ:</b> ameaça ×${multAmeaca.toFixed(2)} · ritmo ×${multRitmo.toFixed(2)} · truncado ×${multTrunc.toFixed(2)} → <b>×${mult.toFixed(2)}</b>`;
+    }
+  } else {
+    jevHtml = '<b>Sem chave OpenRouter:</b> precificação sem ajuste de contexto (só tempo + odd pré). Configure a chave na aba Dashboard.';
+  }
+
+  const final = precoUnder(lamTotal, min, linha, gols, mult);
+  const ev = oddLive * final.p - 1;
+  const oddMin = final.odd * (1 + lvMargem);
+
+  const vd = $('lvVeredito');
+  if (ev >= 0 && oddLive >= oddMin) { vd.className = 'veredito v-verde'; vd.textContent = '✔ EV+ — odd live acima da justa precificada com margem'; }
+  else if (ev >= 0) { vd.className = 'veredito v-amarelo'; vd.textContent = '◑ EV+ NO LIMITE — acima da justa, mas sem a margem'; }
+  else { vd.className = 'veredito v-vermelho'; vd.textContent = '✖ EV− — odd live abaixo da justa precificada'; }
+
+  $('lvMetricas').innerHTML =
+    `<div class="metrica"><div class="k">Odd base (só tempo)</div><div class="v">${fmtOdd(base.odd)}</div></div>` +
+    `<div class="metrica"><div class="k">Ajuste Jev (λ)</div><div class="v">×${mult.toFixed(2)}</div></div>` +
+    `<div class="metrica"><div class="k">Odd justa final</div><div class="v">${fmtOdd(final.odd)}</div></div>` +
+    `<div class="metrica"><div class="k">EV da odd ${fmtOdd(oddLive)}</div><div class="v" style="color:${ev >= 0 ? 'var(--verde)' : 'var(--vermelho)'}">${(ev >= 0 ? '+' : '') + fmtPct(ev)}</div></div>`;
+
+  // curva de decaimento (próximos 5 min)
+  let linhas = '<tr><th>Minuto</th><th>Odd justa</th><th>Queda vs agora</th></tr>';
+  for (let d = 0; d <= 5; d++) {
+    const f = precoUnder(lamTotal, Math.min(94, min + d), linha, gols, mult);
+    const queda = d === 0 ? '—' : fmtPct(1 - f.odd / final.odd);
+    linhas += `<tr><td>${min + d}'</td><td>${fmtOdd(f.odd)}</td><td>${d === 0 ? '—' : '−' + queda}</td></tr>`;
+  }
+  const f5 = precoUnder(lamTotal, Math.min(94, min + 5), linha, gols, mult);
+  const quedaPorMin = (1 - f5.odd / final.odd) / 5 * 100;
+  linhas += `<tr style="border-top:2px solid var(--borda)"><td colspan="3"><b>Queda média esperada: ${quedaPorMin.toFixed(1)}% da odd por minuto</b> (modelo, sem Jev refeito a cada minuto)</td></tr>`;
+  $('lvDecaimento').innerHTML = linhas;
+
+  // comparador com backtest, se o placar/minuto existir nos dados
+  const placar = `${golsC}-${golsF}`;
+  let bt = '';
+  if (PLACARES.includes(placar)) {
+    const periodo = min < 45 ? 'ht' : 'ft';
+    const { pts, usouGeral } = pontosCalc(periodo, placar);
+    if (pts.length) {
+      const it = interpola(pts, min);
+      const justaBT = 1 / it.p;
+      const div = final.odd / justaBT;
+      bt = `<b>Comparador backtest:</b> ${periodo.toUpperCase()} ${placarFmt(placar)} · justa ${fmtOdd(justaBT)}${usouGeral ? ' (taxa geral — placar sem amostra)' : ''}` +
+           ` · modelo+Jev ${fmtOdd(final.odd)} → ${div > 1.05 ? 'modelo mais pessimista' : div < 0.95 ? 'modelo mais otimista' : 'alinhados'} (${div >= 1 ? '+' : ''}${((div - 1) * 100).toFixed(0)}%)${it.extra ? ' · <b>minuto fora da faixa medida</b>' : ''}`;
+    }
+  }
+  $('lvBacktest').innerHTML = bt || `Sem célula de backtest para ${placarFmt(placar)} — sem comparador.`;
+
+  $('lvJev').innerHTML = jevHtml;
+  $('lvResultado').style.display = '';
 }
 
 // ================= análise por estatística =================
@@ -843,6 +1133,7 @@ function renderStats() {
   renderCobertura();
   initStats();
   initJev();
+  initLive();
 })();
 </script>
 </body>
