@@ -442,7 +442,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div id="lvBacktest" class="fonte" style="margin-top:10px"></div>
     <div id="lvJev" class="jev-probs"></div>
     <p class="nota" style="margin:10px 0 0">
-      Precificação heurística: Poisson (λ da odd pré-live) × decaimento t^0,84 × ajuste de contexto do Jev.
+      Motor: backtest da célula (período, placar, minuto) condicionado ao λ deste jogo, ou Poisson calibrado onde não há célula, × ajuste de contexto do Jev.
       <b>Ainda não validada em forward-test</b> — não substitui os backtests até ser auditada.
       O Jev não gera números; ele classifica o contexto que o código usa para ajustar o modelo.
     </p>
@@ -971,6 +971,12 @@ const lvTaxa = t => LV_A + LV_B * Math.min(t, 90);
 const lvFracAte = t => (t <= 90 ? LV_A * t + LV_B * t * t / 2
                                 : LV_A * 90 + LV_B * 4050 + lvTaxa(90) * (t - 90));
 
+// Peso que a linha pré-jogo ainda merece no minuto t. Serve para amortecer o
+// condicionamento: a razão entre posteriores ignora o placar observado (com 0
+// gols ela é sempre λ_jogo/λ_amostra), então o que já aconteceu em campo não
+// descontaria nada do que o mercado previu antes da bola rolar.
+const lvPesoPreJogo = min => LV_PRIOR / (LV_PRIOR + lvFracAte(min));
+
 // λ de gols ainda esperados na janela que falta do período
 function lvLamRestante(lamJogo, min, periodo, golsTotais) {
   const dec = lvFracAte(min);
@@ -1191,6 +1197,7 @@ let lvAuto = { times: null, frase: null, press: {} };
 // a odd live default (1.80) nunca deve virar veredito: so conta se veio de colagem
 let lvOddDeColagem = false, lvRefOver = null;
 let lvPeriodo = null;            // null = deduz do minuto; chip fixa manualmente
+let lvParMercado = null;         // { linha, over, under } da exchange, para conferir o modelo
 let lvExtras = {};               // pares da colagem sem campo proprio, vao inteiros ao Jev
 const LV_CTX_ORDEM = ['PI1', 'PI2', 'PI3', 'CG', 'Atq. perig.', 'Finaliz.'];
 // patamares combinados do Fut Odds a partir dos quais o indicador favorece over
@@ -1215,6 +1222,7 @@ function lvColar() {
   if (tab[linha]) {
     $('lvOddLive').value = String(tab[linha].under);
     lvOddDeColagem = true;
+    lvParMercado = { linha, over: tab[linha].over, under: tab[linha].under };
     postos.push('odd live ' + tab[linha].under + ' (under ' + linha + ' ' + perAt.toUpperCase() + ', back)');
   } else if (Object.keys(tab).length) {
     postos.push('⚠ tabela ' + perAt.toUpperCase() + ' lida, mas sem a linha ' + linha);
@@ -1230,7 +1238,7 @@ function lvColar() {
   const times = r.times.length >= 2 ? r.times[0] + ' × ' + r.times[1] : null;
   if (times && lvAuto.times && times !== lvAuto.times) {
     lvAuto = { times: null, frase: null, press: {} };
-    lvOddDeColagem = false; lvRefOver = null; lvExtras = {};   // jogo novo: nada anterior vale
+    lvOddDeColagem = false; lvRefOver = null; lvExtras = {}; lvParMercado = null;   // jogo novo
   }
   if (times) lvAuto.times = times;
   if (r.frase) lvAuto.frase = r.frase;
@@ -1318,7 +1326,8 @@ async function lvPrecificar() {
       justaBT = 1 / it.p; extrapolado = it.extra; usouGeralBT = usouGeral;
       // o backtest é incondicional quanto à qualidade ofensiva do jogo:
       // corrige pelo λ desta partida frente ao λ médio da amostra
-      const fator = lamAmostra > 0 ? lamModelo / lamAmostra : 1;
+      const fator = lamAmostra > 0
+        ? Math.pow(lamModelo / lamAmostra, lvPesoPreJogo(min)) : 1;
       lamBase = -Math.log(Math.min(0.999, it.p)) * fator;
       fonteBase = `backtest ${periodo.toUpperCase()} ${placarFmt(placar)} (justa ${fmtOdd(justaBT)})`
         + ` × ${fator.toFixed(2)} de ajuste pelo λ do jogo`
@@ -1386,28 +1395,39 @@ async function lvPrecificar() {
   const avisos = [];
   if (!lvOddDeColagem)
     avisos.push(`a odd live ${fmtOdd(oddLive)} não foi preenchida por colagem — confira em Odds → Over/Under, linha ${linha}`);
+  else if (lvParMercado && lvParMercado.linha === linha && Math.abs(oddLive / lvParMercado.under - 1) > 0.02)
+    avisos.push(`a colagem leu under ${linha} = ${fmtOdd(lvParMercado.under)} (back), mas o campo está `
+      + `${fmtOdd(oddLive)} — confira se não pegou a coluna de lay ou a linha do over`);
 
-  if (aj && aj.vetos.length) {
+  if (aj && aj.vetos.length && ev >= 0) {
     vd.className = 'veredito v-vermelho';
     vd.innerHTML = '✖ NÃO ENTRAR — ' + aj.vetos.join('; ')
-      + '<br><span class="nota">Veto de contexto: vale mesmo com EV positivo.</span>';
+      + '<br><span class="nota">Veto de contexto: derruba a entrada apesar do EV positivo.</span>';
   } else if (ev >= 0 && avisos.length) {
     vd.className = 'veredito v-amarelo';
     vd.innerHTML = '⚠ EV+ NÃO CONFIÁVEL — ' + avisos.join('; ');
   } else if (ev >= 0 && oddLive >= oddMin) {
     vd.className = 'veredito v-verde';
-    vd.textContent = '✔ EV+ — odd acima da justa com margem';
+    vd.innerHTML = '✔ EV+ — odd acima da justa com margem'
+      + (avisos.length ? `<br><span class="nota">⚠ ${avisos.join('; ')}</span>` : '');
   } else if (ev >= 0) {
     vd.className = 'veredito v-amarelo';
     vd.textContent = '◑ EV+ NO LIMITE — acima da justa, sem a margem';
   } else {
     vd.className = 'veredito v-vermelho';
-    vd.textContent = '✖ EV− — odd abaixo da justa para este cenário';
+    vd.innerHTML = '✖ EV− — odd abaixo da justa para este cenário'
+      + (aj && aj.vetos.length ? `<br><span class="nota">O Jev também vetou: ${aj.vetos.join('; ')}.</span>` : '');
   }
+
+  // P implícita pelo mercado, sem o overround do par over/under da linha
+  let pMercado = null;
+  if (lvParMercado && lvParMercado.linha === linha)
+    pMercado = lvProbSemMargem(lvParMercado.under, lvParMercado.over);
 
   $('lvMetricas').innerHTML =
     `<div class="metrica"><div class="k">Mercado</div><div class="v">under ${linha} ${periodo.toUpperCase()}</div></div>` +
     `<div class="metrica"><div class="k">P(não sai mais gol)</div><div class="v">${fmtPct(p)}</div></div>` +
+    (pMercado !== null ? `<div class="metrica"><div class="k">P implícita do mercado</div><div class="v">${fmtPct(pMercado)}</div></div>` : '') +
     `<div class="metrica"><div class="k">Ajuste Jev (λ)</div><div class="v">×${mult.toFixed(2)}</div></div>` +
     `<div class="metrica"><div class="k">Odd justa</div><div class="v">${fmtOdd(justa)}</div></div>` +
     `<div class="metrica"><div class="k">Odd mínima</div><div class="v">${fmtOdd(oddMin)}</div></div>` +
@@ -1420,7 +1440,8 @@ async function lvPrecificar() {
     const t = min + k;
     if (t >= LV_FIM[periodo]) break;
     const lm = lvLamRestante(lj.lam, t, periodo, gols);
-    const fator = lamAmostra > 0 ? lm / lamAmostra : 1;
+    const la2 = lvLamRestante(LV_LAM_AMOSTRA, t, periodo, gols);
+    const fator = la2 > 0 ? Math.pow(lm / la2, lvPesoPreJogo(t)) : 1;
     const lb = justaBT !== null ? -Math.log(Math.min(0.999, 1 / justaBT)) * fator : lm;
     const oj = 1 / Math.exp(-lb * mult);
     linhasTab += `<tr><td>${t}'</td><td>${fmtOdd(oj)}</td><td>${k === 0 ? '—' : ((oj / justa - 1) * 100).toFixed(1) + '%'}</td></tr>`;
@@ -1428,8 +1449,18 @@ async function lvPrecificar() {
   $('lvDecaimento').innerHTML = linhasTab;
 
   const refs = [`<b>Base:</b> ${fonteBase}`, `<b>λ do jogo:</b> ${lj.lam.toFixed(2)} via ${lj.fonte}`];
-  if (justaBT !== null && Math.abs(justa / justaBT - 1) > 0.15)
-    refs.push(`<b style="color:var(--amarelo)">⚠ ${((justa / justaBT - 1) * 100).toFixed(0)}% de divergência vs a justa crua do backtest (${fmtOdd(justaBT)})</b>`);
+  if (justaBT !== null)
+    refs.push(`<b>Backtest cru:</b> ${fmtOdd(justaBT)} (${fmtPct(1 / justaBT)}) — incondicional quanto à `
+      + `qualidade ofensiva do jogo; o ajuste acima é o que corrige isso.`);
+  // o mercado é o melhor juiz quando existe: a divergência que importa é contra ele
+  if (pMercado !== null) {
+    const d = p / pMercado - 1;
+    refs.push(Math.abs(d) > 0.15
+      ? `<b style="color:var(--amarelo)">⚠ modelo ${d >= 0 ? '+' : ''}${(d * 100).toFixed(0)}% vs a P implícita do mercado `
+        + `(${fmtPct(pMercado)}) — divergência grande, desconfie antes de entrar</b>`
+      : `<b>Confere com o mercado:</b> modelo ${fmtPct(p)} vs implícita ${fmtPct(pMercado)} `
+        + `(${d >= 0 ? '+' : ''}${(d * 100).toFixed(0)}%).`);
+  }
   $('lvBacktest').innerHTML = refs.join('<br>');
   $('lvJev').innerHTML = jevHtml;
   $('lvResultado').style.display = '';
