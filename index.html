@@ -923,6 +923,7 @@ const LV_ROTULOS = {
 function lvParse(txt) {
   const t = String(txt || '').replace(/ /g, ' ').replace(/[–—]/g, '-');
   const campos = {}, info = [];
+  let overLive = null;
   const por = (re, fn) => { const m = t.match(re); if (m) fn(m); };
 
   // cabeçalho (vem junto em qualquer aba)
@@ -940,8 +941,11 @@ function lvParse(txt) {
 
   // 8 números do cabeçalho: linha 1 = pré-live, linha 2 = ao vivo
   por(/Casa\s+([\d.,]+)\s+Empate\s+([\d.,]+)\s+Fora\s+([\d.,]+)\s+Over\s*2[.,]5\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/i,
-    m => info.push('1x2 pré ' + m[1] + '/' + m[2] + '/' + m[3] + ' · ao vivo ' + m[5] + '/' + m[6] + '/' + m[7]
-                 + ' · over 2.5 ' + m[4] + ' → ' + m[8]));
+    m => {
+      overLive = lvPN(m[8]);              // over 2.5 ao vivo: referência de mercado
+      info.push('1x2 pré ' + m[1] + '/' + m[2] + '/' + m[3] + ' · ao vivo ' + m[5] + '/' + m[6] + '/' + m[7]
+                 + ' · over 2.5 ' + m[4] + ' → ' + m[8]);
+    });
 
   // abas Press. e Stats
   for (const [re, rot, alvo, modo] of LV_PARES) {
@@ -988,11 +992,13 @@ function lvParse(txt) {
     if (cand.length > 8) frase = cand;
   }
 
-  return { campos, info, times, frase, linhas };
+  return { campos, info, times, frase, linhas, overLive };
 }
 
 // contexto acumulado entre colagens (cada aba traz só um pedaço)
 let lvAuto = { times: null, frase: null, press: {} };
+// a odd live default (1.80) nunca deve virar veredito: so conta se veio de colagem
+let lvOddDeColagem = false, lvRefOver = null;
 const LV_CTX_ORDEM = ['PI1', 'PI2', 'PI3', 'CG', 'Atq. perig.', 'Finaliz.'];
 // patamares combinados do Fut Odds a partir dos quais o indicador favorece over
 const LV_PATAMAR = { PI1: 70, PI2: 12, PI3: 8 };
@@ -1012,14 +1018,19 @@ function lvColar() {
   const linha = parseFloat($('lvLinha').value);
   if (r.linhas[linha]) {
     $('lvOddLive').value = String(r.linhas[linha].under);
+    lvOddDeColagem = true;
     postos.push('odd live ' + r.linhas[linha].under + ' (under ' + linha + ', back)');
   } else if (Object.keys(r.linhas).length) {
     postos.push('⚠ tabela de odds lida, mas sem a linha ' + linha);
   }
+  if (r.overLive) lvRefOver = r.overLive;
 
   // contexto do Jev: acumula por rótulo; trocar de jogo zera o acumulado
   const times = r.times.length >= 2 ? r.times[0] + ' × ' + r.times[1] : null;
-  if (times && lvAuto.times && times !== lvAuto.times) lvAuto = { times: null, frase: null, press: {} };
+  if (times && lvAuto.times && times !== lvAuto.times) {
+    lvAuto = { times: null, frase: null, press: {} };
+    lvOddDeColagem = false; lvRefOver = null;        // jogo novo: odd anterior nao vale mais
+  }
   if (times) lvAuto.times = times;
   if (r.frase) lvAuto.frase = r.frase;
   for (const i of r.info) {
@@ -1039,9 +1050,14 @@ function lvColar() {
   }
 
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const alerta = (postos.length && !lvOddDeColagem)
+    ? '<br><b style="color:var(--amarelo)">⚠ Odd live não veio nesta colagem</b> — está em '
+      + esc($('lvOddLive').value) + ', que é valor antigo. No Fut Odds abra <b>Odds → Over/Under</b> '
+      + '(a sub-aba Principais não traz a linha de gols) e cole de novo, ou digite a odd à mão.'
+    : '';
   $('lvPasteMsg').innerHTML = postos.length
     ? '<b>Preenchido:</b> ' + esc(postos.join(' · '))
-      + (r.info.length ? '<br><span class="nota">Lido: ' + esc(r.info.join(' · ')) + '</span>' : '')
+      + (r.info.length ? '<br><span class="nota">Lido: ' + esc(r.info.join(' · ')) + '</span>' : '') + alerta
     : '<b>Nada reconhecido nesse texto.</b> Copie a tela do jogo no Fut Odds (abas Press., Prob., Stats ou Odds) e cole aqui.';
   return postos.length > 0;
 }
@@ -1137,8 +1153,25 @@ async function lvPrecificar() {
   const ev = oddLive * final.p - 1;
   const oddMin = final.odd * (1 + lvMargem);
 
+  // a odd live e a unica entrada que o modelo nao sabe conferir sozinho: se ela nao
+  // veio de colagem, ou destoa do mercado, nenhum EV+ pode sair como verde confiante
+  const avisos = [];
+  if (!lvOddDeColagem)
+    avisos.push('a odd live ' + fmtOdd(oddLive) + ' não foi preenchida por colagem — confira em Odds → Over/Under');
+  if (lvRefOver && linha === 2.5 && lvRefOver > 1.01) {
+    const underMercado = 1 / (1 - 1 / lvRefOver);       // implicada pelo over 2.5 ao vivo
+    if (oddLive > underMercado * 1.25)
+      avisos.push('o over 2.5 ao vivo estava ' + fmtOdd(lvRefOver) + ', o que implica under ≈ '
+        + fmtOdd(underMercado) + ' — a odd live informada não existe nesse mercado');
+  }
+
   const vd = $('lvVeredito');
-  if (ev >= 0 && oddLive >= oddMin) { vd.className = 'veredito v-verde'; vd.textContent = '✔ EV+ — odd live acima da justa precificada com margem'; }
+  if (ev >= 0 && avisos.length) {
+    vd.className = 'veredito v-amarelo';
+    vd.innerHTML = '⚠ EV+ NÃO CONFIÁVEL — ' + avisos.join('; ')
+      + '<br><span class="nota">O EV abaixo só vale depois de corrigir isso.</span>';
+  }
+  else if (ev >= 0 && oddLive >= oddMin) { vd.className = 'veredito v-verde'; vd.textContent = '✔ EV+ — odd live acima da justa precificada com margem'; }
   else if (ev >= 0) { vd.className = 'veredito v-amarelo'; vd.textContent = '◑ EV+ NO LIMITE — acima da justa, mas sem a margem'; }
   else { vd.className = 'veredito v-vermelho'; vd.textContent = '✖ EV− — odd live abaixo da justa precificada'; }
 
