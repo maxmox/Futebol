@@ -13,7 +13,9 @@
 //        Nome: TYPESAFE_API_KEY
 //        Valor: sua chave (apikey_...)
 //   5. Copie a URL do Worker (algo como https://jev-relay.SEU-USUARIO.workers.dev)
-//   6. No site, aba Chave API: cole a URL no campo "URL do relay" e salve
+//   6. A URL do relay já vai embutida no site como padrão; se a sua for outra,
+//      ajuste JEV_RELAY_PADRAO no analisar_backtests.py ou salve a URL na aba
+//      "Conexão Jev" do site (fica no localStorage do navegador)
 //
 // Custo do Worker: 100.000 requisições/dia gratuitas — praticamente infinito
 // para este uso. A chamada ao Jev continua debitando seus créditos TypeSafe.
@@ -48,11 +50,18 @@ export default {
       return new Response(JSON.stringify({ erro: "JSON inválido" }), { status: 400, headers: CORS });
     }
 
-    const resp = await fetch(UPSTREAM, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: corpo,
-    });
+    let resp;
+    try {
+      resp = await fetch(UPSTREAM, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: corpo,
+      });
+    } catch (e) {
+      // sem este catch, uma falha de rede no upstream derrubaria o Worker e a
+      // resposta de erro da Cloudflare voltaria SEM os headers de CORS
+      return new Response(JSON.stringify({ erro: "falha ao alcançar a TypeSafe: " + e.message }), { status: 502, headers: CORS });
+    }
     const texto = await resp.text();
     return new Response(texto, { status: resp.status, headers: { ...CORS, "Content-Type": "application/json" } });
   },

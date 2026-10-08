@@ -229,7 +229,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="abas">
     <div class="aba on" id="tabDash" onclick="trocaAba('dash')">Dashboard</div>
     <div class="aba" id="tabLive" onclick="trocaAba('live')">Ao vivo (Jev)</div>
-    <div class="aba" id="tabCfg" onclick="trocaAba('cfg')">Chave API</div>
+    <div class="aba" id="tabCfg" onclick="trocaAba('cfg')">Conexão Jev</div>
   </div>
 
   <div id="abaDash">
@@ -322,7 +322,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </p>
     <div class="lbl">Contexto ao vivo (opcional)</div>
     <textarea id="jevContexto" rows="2" placeholder="Ex.: visitante pressiona, 3 escanteios nos últimos 10 min, chance clara aos 78'..."></textarea>
-    <p class="nota" style="margin:6px 0 0">Sem chave salva, o decisor usa só o cálculo de backtest. Configure a chave na aba <b>Chave API</b> acima.</p>
+    <p class="nota" style="margin:6px 0 0">Se o relay estiver fora do ar, o decisor cai para o cálculo de backtest puro. A conexão é configurada na aba <b>Conexão Jev</b> acima.</p>
     <button class="btn-jev" id="jevConsultar">Consultar decisão</button>
     <div id="jevVeredito"></div>
     <div id="jevDetalhe"></div>
@@ -442,33 +442,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   </div><!-- /abaLive -->
 
-  <!-- ============ ABA CHAVE API ============ -->
+  <!-- ============ ABA CONEXÃO JEV ============ -->
   <div id="abaCfg" style="display:none">
   <div class="card">
-    <h2>Chave de API do Jev</h2>
+    <h2>Conexão do Jev</h2>
     <p class="nota" style="margin:0 0 10px">
-      A chave fica apenas no <b>seu navegador</b> (localStorage) e vai direto ao provedor — nunca toca neste site,
-      no repositório ou em servidor nosso. Custo ~US$ 0,00002 por decisão.
+      O site já vem ligado ao <b>relay Cloudflare do projeto</b> — um Worker gratuito que guarda a chave TypeSafe
+      (fora do repositório) e repassa as chamadas, contornando o bloqueio de CORS da API oficial.
+      <b>Não é preciso colar chave nenhuma</b>: clique em <b>Testar conexão</b> e use. Custo ~US$ 0,00002 por decisão.
     </p>
-    <input id="cfgKey" type="password" placeholder="Cole a chave aqui..." autocomplete="off"
-           style="width:100%;background:#0d1220;border:1px solid var(--borda);border-radius:10px;color:var(--txt);font-size:.95rem;padding:10px;margin-bottom:8px">
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn-mini" id="cfgSalvar">Salvar neste navegador</button>
-      <button class="btn-mini" id="cfgRemover">Remover</button>
       <button class="btn-mini" id="cfgTestar">Testar conexão</button>
     </div>
     <div id="cfgStatus" class="jev-probs" style="margin-top:10px"></div>
-    <div class="lbl" style="margin-top:12px">URL do relay Cloudflare (necessária para chave TypeSafe)</div>
+    <div class="lbl" style="margin-top:12px">URL do relay Cloudflare (já preenchida — só mude se fizer redeploy do Worker)</div>
     <input id="cfgRelay" type="text" placeholder="https://jev-relay.SEU-USUARIO.workers.dev"
            style="width:100%;background:#0d1220;border:1px solid var(--borda);border-radius:10px;color:var(--txt);font-size:.9rem;padding:9px 10px">
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn-mini" id="cfgSalvarRelay">Salvar relay</button>
+      <button class="btn-mini" id="cfgRemover">Restaurar padrão</button>
     </div>
     <p class="nota" style="margin:8px 0 0">
-      <b>Chave TypeSafe</b> (começa com <code>apikey_...</code>, do console.typesafe.ai): a API oficial
-      <b>bloqueia chamadas de navegador (CORS)</b> — o site resolve isso com um relay Cloudflare Worker
-      (grátis) que guarda sua chave e repassa a chamada. Código pronto em <code>relay_cloudflare.js</code> no repositório;
-      instruções de deploy em 6 passos no topo do arquivo.
+      A URL do relay fica salva só no <b>seu navegador</b> (localStorage) quando alterada.
+      Código do Worker em <code>relay_cloudflare.js</code> no repositório, com instruções de deploy no topo do arquivo.
     </p>
   </div>
   </div><!-- /abaCfg -->
@@ -714,7 +710,9 @@ function renderCobertura() {
 }
 
 // ================= decisor Jev =================
-const JEV_URL = 'https://openrouter.ai/api/alpha/decisions';
+// O site chama SEMPRE o relay Cloudflare (Worker) — a chave TypeSafe fica
+// guardada no Worker, fora do repositório, e a chamada não sofre CORS.
+const JEV_RELAY_PADRAO = 'https://still-cake-5afc.cavalcante-maxi.workers.dev';
 const JEV_QUESTOES = {
   risco: {
     type: 'choice',
@@ -734,48 +732,37 @@ const JEV_QUESTOES = {
     instructions: 'O contexto ao vivo indica jogo truncado de baixa intensidade, consistente com a entrada under?'
   }
 };
-const jevKey = () => localStorage.getItem('openrouter_key') || '';
-const jevRelay = () => localStorage.getItem('jev_relay_url') || '';
-const cfgTipoChave = k => !k ? '' : k.startsWith('apikey_') ? 'typesafe' : k.startsWith('sk-or') ? 'openrouter' : 'desconhecida';
+function normRelay(u) {
+  u = (u || '').trim().replace(/\s+/g, '');
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  return u.replace(/\/+$/, '');
+}
+const jevRelay = () => normRelay(localStorage.getItem('jev_relay_url')) || JEV_RELAY_PADRAO;
 
 function cfgStatus() {
-  const k = jevKey(), tipo = cfgTipoChave(k), el = $('cfgStatus');
-  const relay = jevRelay();
+  const el = $('cfgStatus'), relay = jevRelay();
   $('cfgRelay').value = relay;
-  if (!k) { el.innerHTML = 'Nenhuma chave salva neste navegador.'; return; }
-  const mascara = k.slice(0, 12) + '…' + k.slice(-4);
-  if (tipo === 'typesafe')
-    el.innerHTML = `<b>Chave TypeSafe salva</b> (${mascara}). ` + (relay
-      ? 'Vai rodar via relay Cloudflare salvo — pronta para usar.'
-      : 'Falta a <b>URL do relay</b> abaixo (a API TypeSafe não aceita chamada direta de navegador).');
-  else if (tipo === 'openrouter')
-    el.innerHTML = `<b>Chave OpenRouter salva</b> (${mascara}). Funciona direto, sem relay.`;
-  else
-    el.innerHTML = `<b>Chave salva</b> (${mascara}) — formato não reconhecido; será tratada como OpenRouter.`;
+  el.innerHTML = normRelay(localStorage.getItem('jev_relay_url'))
+    ? `<b>Relay personalizado salvo:</b> ${relay}`
+    : '<b>Relay padrão do projeto ativo</b> — clique em <b>Testar conexão</b> para confirmar que está no ar.';
 }
 
 function initCfg() {
   cfgStatus();
-  $('cfgSalvar').onclick = () => {
-    const k = $('cfgKey').value.trim();
-    if (!k) { cfgStatus(); return; }
-    localStorage.setItem('openrouter_key', k);
-    $('cfgKey').value = '';
-    cfgStatus();
-  };
-  $('cfgRemover').onclick = () => { localStorage.removeItem('openrouter_key'); localStorage.removeItem('jev_relay_url'); $('cfgKey').value = ''; cfgStatus(); };
+  $('cfgRemover').onclick = () => { localStorage.removeItem('jev_relay_url'); localStorage.removeItem('openrouter_key'); cfgStatus(); };
   $('cfgSalvarRelay').onclick = () => {
-    localStorage.setItem('jev_relay_url', $('cfgRelay').value.trim());
+    const u = normRelay($('cfgRelay').value);
+    if (!u) { cfgStatus(); return; }
+    localStorage.setItem('jev_relay_url', u);
     cfgStatus();
   };
   $('cfgTestar').onclick = async () => {
-    if (!jevKey()) { $('cfgStatus').innerHTML = 'Salve uma chave primeiro.'; return; }
-    if (cfgTipoChave(jevKey()) === 'typesafe' && !jevRelay()) { $('cfgStatus').innerHTML = '<b>Falta a URL do relay</b> — a API TypeSafe não aceita chamada direta de navegador (CORS).'; return; }
     $('cfgStatus').innerHTML = 'Testando…';
     const r = await jevChamar({ teste: 'conexao' }, { ping: { type: 'noul', instructions: 'Este texto é um teste de conexão?' } }, false);
     $('cfgStatus').innerHTML = r.erro
       ? `<b>Falhou:</b> ${r.erro}`
-      : `<b>Conectado.</b> Resposta do Jev recebida (P(teste)=${((r.ans.ping && r.ans.ping.noul != null) ? r.ans.ping.noul.toFixed(2) : 'ok')}).`;
+      : `<b>Conectado.</b> Resposta do Jev recebida via relay (P(teste)=${((r.ans.ping && r.ans.ping.noul != null) ? r.ans.ping.noul.toFixed(2) : 'ok')}).`;
   };
   $('jevConsultar').onclick = jevDecidir;
 }
@@ -827,30 +814,27 @@ function jevMostra(c, detHtml, vered) {
 }
 
 function jevMsgErro(status, data) {
-  const msg = (data && (data.error && (data.error.message || data.error.code))) || '';
-  if (status === 401) return 'Chave inválida (401). Confira a chave na aba Chave API.';
-  if (status === 402) return 'Créditos esgotados na OpenRouter (402).';
-  if (status === 422) return 'Requisição rejeitada (422): ' + msg;
+  // TypeSafe devolve {"detail":{"error_type","message"}}; outras APIs usam {"error":{"message"}}
+  const msg = (data && (
+    (data.detail && (data.detail.message || data.detail.error_type)) ||
+    (data.error && (data.error.message || data.error.code)) ||
+    data.erro)) || '';
+  if (status === 401) return 'Chave inválida no Worker (401) — confira o secret TYPESAFE_API_KEY do relay.';
+  if (status === 402) return 'Créditos esgotados na TypeSafe (402).';
   if (status === 429) return 'Limite de requisições (429) — tente em instantes.';
   if (status === 529) return 'API saturada (529) — tente em instantes.';
   return 'Erro ' + status + (msg ? ': ' + msg : '');
 }
 
 async function jevChamar(state, questions, tentativa) {
-  const tipo = cfgTipoChave(jevKey());
-  // TypeSafe: navegador é bloqueado por CORS → passa pelo relay Cloudflare (chave fica no Worker)
-  if (tipo === 'typesafe' && !jevRelay())
-    return { erro: 'Chave TypeSafe precisa da URL do relay (aba Chave API) — a API oficial não aceita chamada direta de navegador.' };
-  const url = tipo === 'typesafe' ? jevRelay() : JEV_URL;
-  const model = tipo === 'typesafe' ? 'jev-latest' : 'typesafe/jev-latest';
-  const headers = { 'Content-Type': 'application/json' };
-  if (tipo !== 'typesafe') headers['Authorization'] = 'Bearer ' + jevKey(); // no relay a chave fica no Worker
+  const url = jevRelay();
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 15000);
+  const to = setTimeout(() => ctrl.abort(), 20000);
   try {
     const resp = await fetch(url, {
-      method: 'POST', signal: ctrl.signal, headers,
-      body: JSON.stringify({ model, state, questions })
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'jev-latest', state, questions })
     });
     if ((resp.status === 429 || resp.status === 529) && !tentativa) {
       await new Promise(r => setTimeout(r, 2000));
@@ -859,10 +843,12 @@ async function jevChamar(state, questions, tentativa) {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) return { erro: jevMsgErro(resp.status, data) };
     const ans = data.answers || (data.output && data.output.answers) || (data.decision && data.decision.answers) || null;
-    if (!ans) return { erro: 'Resposta fora do formato esperado (endpoint alpha pode ter mudado).' };
+    if (!ans) return { erro: 'Resposta fora do formato esperado (o relay respondeu, mas sem o campo "answers").' };
     return { ans };
   } catch (e) {
-    return { erro: e.name === 'AbortError' ? 'Tempo esgotado (15s) — API não respondeu.' : 'Falha de rede ou CORS bloqueado.' };
+    return { erro: e.name === 'AbortError'
+      ? 'Tempo esgotado (20s) — o relay ou a API não respondeu.'
+      : 'Falha de rede ao chamar o relay (' + (e.message || e.name) + '). Confira a URL na aba Conexão Jev.' };
   } finally { clearTimeout(to); }
 }
 
@@ -876,8 +862,8 @@ async function jevDecidir() {
     jevMostra(c, `<div class="fonte">Jev não consultado: a odd está tão abaixo da justa que o veredito é matemático — contexto nenhum o tornaria lucrativo.</div>`);
     return;
   }
-  if (!jevKey()) {
-    jevMostra(c, `<div class="fonte">⚠ Sem chave de API, o Jev não avalia o contexto. Salve a chave na aba Chave API — o veredito acima é só o cálculo de backtest.</div>`);
+  if (!jevRelay()) {
+    jevMostra(c, `<div class="fonte">⚠ Sem relay configurado, o Jev não avalia o contexto — o veredito acima é só o cálculo de backtest.</div>`);
     return;
   }
 
@@ -1045,9 +1031,9 @@ async function lvPrecificar() {
     contexto: $('lvCtx').value.trim() || null
   };
 
-  // consulta Jev (se houver chave)
+  // consulta Jev (via relay)
   let mult = 1, jevHtml = '', ans = null;
-  if (jevKey()) {
+  if (jevRelay()) {
     $('lvPrecificar').disabled = true;
     $('lvPrecificar').textContent = 'Consultando Jev…';
     const r = await jevChamar(estado, LV_QUESTOES, false);
@@ -1072,7 +1058,7 @@ async function lvPrecificar() {
                 `<b>Ajuste aplicado ao λ:</b> ameaça ×${multAmeaca.toFixed(2)} · ritmo ×${multRitmo.toFixed(2)} · truncado ×${multTrunc.toFixed(2)} → <b>×${mult.toFixed(2)}</b>`;
     }
   } else {
-    jevHtml = '<b>Sem chave de API:</b> precificação sem ajuste de contexto (só tempo + odd pré). Configure a chave na aba <b>Chave API</b>.';
+    jevHtml = '<b>Sem relay configurado:</b> precificação sem ajuste de contexto (só tempo + odd pré). Configure na aba <b>Conexão Jev</b>.';
   }
 
   const final = precoUnder(lamTotal, min, linha, gols, mult);
