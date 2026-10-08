@@ -371,6 +371,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <h2>Estado do jogo ao vivo</h2>
     <p class="nota" style="margin:0 0 10px">Preencha com os dados da tela ao vivo (Fut Odds). Campos de pressão e probabilidades são opcionais, mas melhoram a avaliação do Jev.</p>
 
+    <div class="lbl">Preenchimento rápido — Ctrl+C no Fut Odds, Ctrl+V aqui (acumulativo)</div>
+    <textarea id="lvPaste" rows="3" placeholder="No Fut Odds: Ctrl+A na tela do jogo, Ctrl+C, Ctrl+V aqui — os campos se preenchem sozinhos. Repita com as abas Press., Prob. (Match e Gols), Stats e Odds: cada colagem completa o que falta e nunca apaga o que já entrou."></textarea>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn-mini" id="lvColarBtn">Preencher campos</button>
+    </div>
+    <div id="lvPasteMsg" class="jev-probs" style="margin-top:6px"></div>
+
     <div class="lbl">Jogo</div>
     <div class="grade-entradas">
       <div class="gi"><div class="k">Gols casa</div><input id="lvGolsC" type="number" min="0" value="0"></div>
@@ -395,14 +402,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     <div class="lbl">Indicadores de pressão (opcional)</div>
     <div class="grade-entradas">
-      <div class="gi"><div class="k">APPM</div><input id="lvAPPM" type="number" step="0.01" placeholder="—"></div>
-      <div class="gi"><div class="k">APPM10</div><input id="lvAPPM10" type="number" step="0.01" placeholder="—"></div>
-      <div class="gi"><div class="k">CG</div><input id="lvCG" type="number" placeholder="—"></div>
-      <div class="gi"><div class="k">CG10</div><input id="lvCG10" type="number" placeholder="—"></div>
-      <div class="gi"><div class="k">PI1</div><input id="lvPI1" type="number" placeholder="—"></div>
-      <div class="gi"><div class="k">PI2</div><input id="lvPI2" type="number" placeholder="—"></div>
-      <div class="gi"><div class="k">PI3</div><input id="lvPI3" type="number" placeholder="—"></div>
-      <div class="gi"><div class="k">xG ao vivo</div><input id="lvXG" type="number" step="0.1" placeholder="—"></div>
+      <div class="gi"><div class="k">APPM (soma)</div><input id="lvAPPM" type="number" step="0.01" placeholder="—"></div>
+      <div class="gi"><div class="k">APPM10 (soma)</div><input id="lvAPPM10" type="number" step="0.01" placeholder="—"></div>
+      <div class="gi"><div class="k">CG (soma)</div><input id="lvCG" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">CG10 (soma)</div><input id="lvCG10" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">PI1 (soma)</div><input id="lvPI1" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">PI2 (soma)</div><input id="lvPI2" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">PI3 (soma)</div><input id="lvPI3" type="number" placeholder="—"></div>
+      <div class="gi"><div class="k">xG ao vivo (soma)</div><input id="lvXG" type="number" step="0.1" placeholder="—"></div>
     </div>
 
     <div class="lbl">Volume de jogo (opcional)</div>
@@ -977,6 +984,165 @@ const LV_QUESTOES = {
   }
 };
 
+// ---- Preenchimento rápido: lê o Ctrl+C do Fut Odds ----
+// Acumulativo: cada colagem traz só a aba que estava aberta e preenche o que
+// reconhece, sem nunca limpar campo já preenchido. Cole Press., Prob., Stats e
+// Odds em sequência e o formulário vai se completando.
+
+const lvPN = s => { const v = parseFloat(String(s).replace(',', '.')); return isNaN(v) ? null : v; };
+
+// pares "<casa> RÓTULO <fora>" das abas Press. e Stats
+const LV_PARES = [
+  [/([\d.,]+)\s+\bAPPM\b\s+([\d.,]+)/i, 'APPM', 'lvAPPM', 'soma'],
+  [/([\d.,]+)\s+\bAPPM10\b\s+([\d.,]+)/i, 'APPM10', 'lvAPPM10', 'soma'],
+  [/([\d.,]+)\s+\bCG\b\s+([\d.,]+)/i, 'CG', 'lvCG', 'soma'],
+  [/([\d.,]+)\s+\bCG10\b\s+([\d.,]+)/i, 'CG10', 'lvCG10', 'soma'],
+  [/([\d.,]+)\s+\bPI1\b\s+([\d.,]+)/i, 'PI1', 'lvPI1', 'soma'],
+  [/([\d.,]+)\s+\bPI2\b\s+([\d.,]+)/i, 'PI2', 'lvPI2', 'soma'],
+  [/([\d.,]+)\s+\bPI3\b\s+([\d.,]+)/i, 'PI3', 'lvPI3', 'soma'],
+  [/([\d.,]+)\s+\bH2H\b\s+([\d.,]+)/i, 'H2H', null, 'soma'],
+  [/([\d.,]+)\s*%\s+Posse de Bola\s+([\d.,]+)\s*%/i, 'Posse', 'lvPosse', 'casa'],
+  [/([\d.,]+)\s+xG\s*\(Expected Goals\)\s+([\d.,]+)/i, 'xG', 'lvXG', 'soma'],
+  [/([\d.,]+)\s+Ataques Perigosos\s+([\d.,]+)/i, 'Atq. perig.', 'lvAPC|lvAPF', 'ambos'],
+  [/([\d.,]+)\s+Finaliza[çc][õo]es\s+([\d.,]+)/i, 'Finaliz.', 'lvFinC|lvFinF', 'ambos'],
+  [/([\d.,]+)\s+Escanteios\s+([\d.,]+)/i, 'Escanteios', 'lvEscC|lvEscF', 'ambos'],
+];
+
+const LV_ROTULOS = {
+  lvMin: 'minuto', lvGolsC: 'gols casa', lvGolsF: 'gols fora', lvOddLive: 'odd live',
+  lvOddPre: 'odd pré', lvLinha: 'linha', lvWinC: 'vit. casa', lvEmp: 'empate', lvWinF: 'vit. fora',
+  lvOver25: 'over 2.5 proj.', lvAPPM: 'APPM som.', lvAPPM10: 'APPM10 som.', lvCG: 'CG som.', lvCG10: 'CG10 som.',
+  lvPI1: 'PI1 som.', lvPI2: 'PI2 som.', lvPI3: 'PI3 som.', lvXG: 'xG som.', lvPosse: 'posse casa',
+  lvAPC: 'atq.perig. casa', lvAPF: 'atq.perig. fora', lvFinC: 'finaliz. casa',
+  lvFinF: 'finaliz. fora', lvEscC: 'escant. casa', lvEscF: 'escant. fora',
+};
+
+function lvParse(txt) {
+  const t = String(txt || '').replace(/ /g, ' ').replace(/[–—]/g, '-');
+  const campos = {}, info = [];
+  const por = (re, fn) => { const m = t.match(re); if (m) fn(m); };
+
+  // cabeçalho (vem junto em qualquer aba)
+  por(/(\d{1,3})\s*'/, m => { const v = lvPN(m[1]); if (v !== null && v <= 95) campos.lvMin = v; });
+
+  const placar = [...t.matchAll(/\(\s*\d+\s*[ºo°]\s*\)\s*(\d+)\b/g)];
+  if (placar.length >= 2) { campos.lvGolsC = lvPN(placar[0][1]); campos.lvGolsF = lvPN(placar[1][1]); }
+
+  const times = [...t.matchAll(/([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9 .'-]{1,40}?)\s*\(\s*\d+\s*[ºo°]\s*\)/g)].map(m => {
+    let n = m[1].replace(/\s*\blogo\b\s*/gi, '|').split('|').pop().trim();
+    const meio = Math.floor(n.length / 2);          // "FAR RabatFAR Rabat" -> "FAR Rabat"
+    if (n.length % 2 === 0 && n.slice(0, meio) === n.slice(meio)) n = n.slice(0, meio).trim();
+    return n;
+  });
+
+  // 8 números do cabeçalho: linha 1 = pré-live, linha 2 = ao vivo
+  por(/Casa\s+([\d.,]+)\s+Empate\s+([\d.,]+)\s+Fora\s+([\d.,]+)\s+Over\s*2[.,]5\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/i,
+    m => info.push('1x2 pré ' + m[1] + '/' + m[2] + '/' + m[3] + ' · ao vivo ' + m[5] + '/' + m[6] + '/' + m[7]
+                 + ' · over 2.5 ' + m[4] + ' → ' + m[8]));
+
+  // abas Press. e Stats
+  for (const [re, rot, alvo, modo] of LV_PARES) {
+    por(re, m => {
+      const c = lvPN(m[1]), f = lvPN(m[2]);
+      if (c === null || f === null) return;
+      info.push(rot + ' ' + c + '×' + f + (modo === 'soma' ? ' = ' + +(c + f).toFixed(2) : ''));
+      if (!alvo) return;
+      if (modo === 'ambos') { const [a, b] = alvo.split('|'); campos[a] = c; campos[b] = f; }
+      else if (modo === 'casa') campos[alvo] = c;
+      else campos[alvo] = +(c + f).toFixed(2);          // soma: patamar do Fut Odds e combinado
+    });
+  }
+
+  // aba Prob. (Futodds)
+  por(/Casa\s*\(FT\)\s*([\d.,]+)\s*%/i, m => campos.lvWinC = lvPN(m[1]));
+  por(/Empate\s*\(FT\)\s*([\d.,]+)\s*%/i, m => campos.lvEmp = lvPN(m[1]));
+  por(/Fora\s*\(FT\)\s*([\d.,]+)\s*%/i, m => campos.lvWinF = lvPN(m[1]));
+  por(/Over\s*2[.,]5\s*FT\s*([\d.,]+)\s*%/i, m => campos.lvOver25 = lvPN(m[1]));
+
+  // aba Odds -> Over/Under do tempo regulamentar (ignora o 1º tempo).
+  // A exchange dá 4 preços por linha: over back, over lay, under back, under lay.
+  // Interessa o under BACK (é o que se aposta); o lay fica só no diagnóstico.
+  const reg = t.split(/Total de Gols\s*-\s*Primeiro Tempo/i)[0];
+  const partes = reg.split(/Total de Gols\s*-\s*Tempo Regulamentar/i);
+  const linhas = {};
+  if (partes.length > 1) {
+    for (const m of partes[1].matchAll(/(\d+[.,]5)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/g)) {
+      const u = lvPN(m[4]);
+      if (u !== null && u >= 1.01)
+        linhas[lvPN(m[1])] = { over: lvPN(m[2]), under: u, underLay: lvPN(m[5]) };
+    }
+  }
+  if (Object.keys(linhas).length)
+    info.push('under back/lay por linha: '
+      + Object.entries(linhas).map(([k, v]) => k + ' ' + v.under + '/' + v.underLay).join(' · '));
+
+  // frase de momento do Fut Odds -> vira contexto para o Jev
+  let frase = null;
+  const antes = t.split(/under limite|Casa\s+[\d.,]+\s+Empate/i)[0];
+  const corte = [...antes.matchAll(/Jogou (?:em casa|fora)|\d{2}\/\d{2}/g)].pop();
+  if (corte) {
+    const cand = antes.slice(corte.index + corte[0].length).replace(/\s+/g, ' ').trim();
+    if (cand.length > 8) frase = cand;
+  }
+
+  return { campos, info, times, frase, linhas };
+}
+
+// contexto acumulado entre colagens (cada aba traz só um pedaço)
+let lvAuto = { times: null, frase: null, press: {} };
+const LV_CTX_ORDEM = ['PI1', 'PI2', 'PI3', 'CG', 'Atq. perig.', 'Finaliz.'];
+// patamares combinados do Fut Odds a partir dos quais o indicador favorece over
+const LV_PATAMAR = { PI1: 70, PI2: 12, PI3: 8 };
+
+function lvColar() {
+  const txt = $('lvPaste').value;
+  const r = lvParse(txt);
+  const postos = [];
+
+  for (const [id, v] of Object.entries(r.campos)) {
+    if (v === null || !$(id)) continue;
+    $(id).value = String(v);
+    postos.push((LV_ROTULOS[id] || id) + ' ' + v);
+  }
+
+  // odd live do under: linha da tabela Over/Under que bate com a linha escolhida
+  const linha = parseFloat($('lvLinha').value);
+  if (r.linhas[linha]) {
+    $('lvOddLive').value = String(r.linhas[linha].under);
+    postos.push('odd live ' + r.linhas[linha].under + ' (under ' + linha + ', back)');
+  } else if (Object.keys(r.linhas).length) {
+    postos.push('⚠ tabela de odds lida, mas sem a linha ' + linha);
+  }
+
+  // contexto do Jev: acumula por rótulo; trocar de jogo zera o acumulado
+  const times = r.times.length >= 2 ? r.times[0] + ' × ' + r.times[1] : null;
+  if (times && lvAuto.times && times !== lvAuto.times) lvAuto = { times: null, frase: null, press: {} };
+  if (times) lvAuto.times = times;
+  if (r.frase) lvAuto.frase = r.frase;
+  for (const i of r.info) {
+    const rot = LV_CTX_ORDEM.find(o => i.startsWith(o + ' '));
+    if (!rot) continue;
+    const lim = LV_PATAMAR[rot], soma = parseFloat((i.split(' = ')[1] || ''));
+    lvAuto.press[rot] = lim && !isNaN(soma)
+      ? i + (soma >= lim ? ' — ACIMA do patamar de over (' + lim + ')'
+                         : ' (patamar de over ' + lim + ')')
+      : i;
+  }
+  const press = LV_CTX_ORDEM.filter(o => lvAuto.press[o]).map(o => lvAuto.press[o]).join(' · ');
+  const auto = [lvAuto.times, lvAuto.frase, press].filter(Boolean);
+  if (auto.length) {
+    const manual = $('lvCtx').value.split('\n').filter(l => !l.startsWith('[auto]')).join('\n').trim();
+    $('lvCtx').value = '[auto] ' + auto.join(' — ') + (manual ? '\n' + manual : '');
+  }
+
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  $('lvPasteMsg').innerHTML = postos.length
+    ? '<b>Preenchido:</b> ' + esc(postos.join(' · '))
+      + (r.info.length ? '<br><span class="nota">Lido: ' + esc(r.info.join(' · ')) + '</span>' : '')
+    : '<b>Nada reconhecido nesse texto.</b> Copie a tela do jogo no Fut Odds (abas Press., Prob., Stats ou Odds) e cole aqui.';
+  return postos.length > 0;
+}
+
 const lvNum = id => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
 let lvMargem = 0.05;
 
@@ -984,6 +1150,9 @@ function initLive() {
   chipsDo('lvMargens', [{ label: '0%', v: 0 }, { label: '5%', v: .05 }, { label: '10%', v: .10 }],
     it => lvMargem === it.v, it => { lvMargem = it.v; });
   $('lvPrecificar').onclick = lvPrecificar;
+  $('lvColarBtn').onclick = lvColar;
+  // colar ja preenche: o botao vira so um reforco
+  $('lvPaste').addEventListener('paste', () => setTimeout(lvColar, 0));
 }
 
 async function lvPrecificar() {
