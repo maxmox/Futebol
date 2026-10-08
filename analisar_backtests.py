@@ -458,10 +458,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <button class="btn-mini" id="cfgTestar">Testar conexão</button>
     </div>
     <div id="cfgStatus" class="jev-probs" style="margin-top:10px"></div>
-    <p class="nota" style="margin:10px 0 0">
-      <b>Chave OpenRouter</b> (começa com <code>sk-or-...</code>, crie em openrouter.ai/keys): funciona do navegador — <b>recomendada</b>.<br>
-      <b>Chave TypeSafe</b> (começa com <code>apikey_...</code>, do console.typesafe.ai): a API oficial <b>bloqueia chamadas de navegador (CORS)</b> —
-      o site detecta e avisa; ela funciona em scripts locais (jev_teste.py), mas não aqui. Mesmo modelo Jev nos dois provedores.
+    <div class="lbl" style="margin-top:12px">URL do relay Cloudflare (necessária para chave TypeSafe)</div>
+    <input id="cfgRelay" type="text" placeholder="https://jev-relay.SEU-USUARIO.workers.dev"
+           style="width:100%;background:#0d1220;border:1px solid var(--borda);border-radius:10px;color:var(--txt);font-size:.9rem;padding:9px 10px">
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn-mini" id="cfgSalvarRelay">Salvar relay</button>
+    </div>
+    <p class="nota" style="margin:8px 0 0">
+      <b>Chave TypeSafe</b> (começa com <code>apikey_...</code>, do console.typesafe.ai): a API oficial
+      <b>bloqueia chamadas de navegador (CORS)</b> — o site resolve isso com um relay Cloudflare Worker
+      (grátis) que guarda sua chave e repassa a chamada. Código pronto em <code>relay_cloudflare.js</code> no repositório;
+      instruções de deploy em 6 passos no topo do arquivo.
     </p>
   </div>
   </div><!-- /abaCfg -->
@@ -728,16 +735,21 @@ const JEV_QUESTOES = {
   }
 };
 const jevKey = () => localStorage.getItem('openrouter_key') || '';
+const jevRelay = () => localStorage.getItem('jev_relay_url') || '';
 const cfgTipoChave = k => !k ? '' : k.startsWith('apikey_') ? 'typesafe' : k.startsWith('sk-or') ? 'openrouter' : 'desconhecida';
 
 function cfgStatus() {
   const k = jevKey(), tipo = cfgTipoChave(k), el = $('cfgStatus');
+  const relay = jevRelay();
+  $('cfgRelay').value = relay;
   if (!k) { el.innerHTML = 'Nenhuma chave salva neste navegador.'; return; }
   const mascara = k.slice(0, 12) + '…' + k.slice(-4);
   if (tipo === 'typesafe')
-    el.innerHTML = `<b>Chave TypeSafe salva</b> (${mascara}). Atenção: a API da TypeSafe bloqueia chamadas de navegador (CORS) — as consultas do site vão falhar. Use uma chave OpenRouter aqui; a TypeSafe serve no jev_teste.py local.`;
+    el.innerHTML = `<b>Chave TypeSafe salva</b> (${mascara}). ` + (relay
+      ? 'Vai rodar via relay Cloudflare salvo — pronta para usar.'
+      : 'Falta a <b>URL do relay</b> abaixo (a API TypeSafe não aceita chamada direta de navegador).');
   else if (tipo === 'openrouter')
-    el.innerHTML = `<b>Chave OpenRouter salva</b> (${mascara}). Pronta para usar no Decisor e na aba Ao vivo.`;
+    el.innerHTML = `<b>Chave OpenRouter salva</b> (${mascara}). Funciona direto, sem relay.`;
   else
     el.innerHTML = `<b>Chave salva</b> (${mascara}) — formato não reconhecido; será tratada como OpenRouter.`;
 }
@@ -751,10 +763,14 @@ function initCfg() {
     $('cfgKey').value = '';
     cfgStatus();
   };
-  $('cfgRemover').onclick = () => { localStorage.removeItem('openrouter_key'); $('cfgKey').value = ''; cfgStatus(); };
+  $('cfgRemover').onclick = () => { localStorage.removeItem('openrouter_key'); localStorage.removeItem('jev_relay_url'); $('cfgKey').value = ''; cfgStatus(); };
+  $('cfgSalvarRelay').onclick = () => {
+    localStorage.setItem('jev_relay_url', $('cfgRelay').value.trim());
+    cfgStatus();
+  };
   $('cfgTestar').onclick = async () => {
     if (!jevKey()) { $('cfgStatus').innerHTML = 'Salve uma chave primeiro.'; return; }
-    if (cfgTipoChave(jevKey()) === 'typesafe') { $('cfgStatus').innerHTML = '<b>Falha esperada:</b> chave TypeSafe — a API oficial não aceita chamadas de navegador (CORS).'; return; }
+    if (cfgTipoChave(jevKey()) === 'typesafe' && !jevRelay()) { $('cfgStatus').innerHTML = '<b>Falta a URL do relay</b> — a API TypeSafe não aceita chamada direta de navegador (CORS).'; return; }
     $('cfgStatus').innerHTML = 'Testando…';
     const r = await jevChamar({ teste: 'conexao' }, { ping: { type: 'noul', instructions: 'Este texto é um teste de conexão?' } }, false);
     $('cfgStatus').innerHTML = r.erro
@@ -822,14 +838,18 @@ function jevMsgErro(status, data) {
 
 async function jevChamar(state, questions, tentativa) {
   const tipo = cfgTipoChave(jevKey());
-  const url = tipo === 'typesafe' ? 'https://api.typesafe.ai/v1/systemone' : JEV_URL;
+  // TypeSafe: navegador é bloqueado por CORS → passa pelo relay Cloudflare (chave fica no Worker)
+  if (tipo === 'typesafe' && !jevRelay())
+    return { erro: 'Chave TypeSafe precisa da URL do relay (aba Chave API) — a API oficial não aceita chamada direta de navegador.' };
+  const url = tipo === 'typesafe' ? jevRelay() : JEV_URL;
   const model = tipo === 'typesafe' ? 'jev-latest' : 'typesafe/jev-latest';
+  const headers = { 'Content-Type': 'application/json' };
+  if (tipo !== 'typesafe') headers['Authorization'] = 'Bearer ' + jevKey(); // no relay a chave fica no Worker
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), 15000);
   try {
     const resp = await fetch(url, {
-      method: 'POST', signal: ctrl.signal,
-      headers: { 'Authorization': 'Bearer ' + jevKey(), 'Content-Type': 'application/json' },
+      method: 'POST', signal: ctrl.signal, headers,
       body: JSON.stringify({ model, state, questions })
     });
     if ((resp.status === 429 || resp.status === 529) && !tentativa) {
