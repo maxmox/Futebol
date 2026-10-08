@@ -41,7 +41,8 @@
 - `evento_critico` é unilateral (só empurra λ para cima): a ausência de pênalti/expulsão é o caso normal, não uma evidência a favor do under.
 - Teto `LV_TETO = 0,62` em log → multiplicador entre **×0,54 e ×1,86**. O Jev corrige contexto; não reescreve a estimativa empírica.
 - **Vetos**, que valem mesmo com EV positivo: `ameaca.alta ≥ 55%` ou `evento_critico ≥ 60%` → veredito "NÃO ENTRAR".
-- O estado enviado inclui os pares **casa×fora** (que a soma dos campos esconde), os patamares de over do Fut Odds, e `outros_dados` — qualquer par `<n> RÓTULO <n>` que a colagem encontrou e que não tem campo próprio no formulário (No Alvo, Cartões, Ataques…) chega ao Jev mesmo assim.
+- O estado enviado inclui os pares **casa×fora** (que a soma dos campos esconde), os patamares de over do Fut Odds, e `outros_dados` — pares `<n> RÓTULO <n>` sem campo próprio no formulário (Ataques, No Alvo, Cartões Amarelos). **A varredura fica presa ao bloco de Stats/Pressão**: solta no texto inteiro ela lia o cabeçalho de odds e os rótulos de aba como estatística (`Empate 2.36×3.40`, `Geral 365×5`, `Min 10×15`) e mandava isso ao Jev como se fosse dado de jogo.
+- **Troca de período refaz a odd** (`lvEscolheOdd`): a mesma linha tem preço diferente em HT e FT, então mudar o chip depois de colar reescolhe o valor na tabela certa. Se a colagem não trouxe a tabela daquele período, a odd é marcada como não confirmada e o EV+ trava.
 
 ## Backtests atuais (27.243 entradas, gerado 2026-10-05)
 

@@ -1171,13 +1171,21 @@ function lvParse(txt) {
     info.push('HT under back/lay: '
       + Object.entries(linhasHT).map(([k, v]) => k + ' ' + v.under + '/' + v.underLay).join(' · '));
 
-  // qualquer par '<n> RÓTULO <n>' que não tem campo próprio ainda vai ao Jev
+  // Pares '<casa> RÓTULO <fora>' sem campo próprio no formulário seguem assim mesmo
+  // para o Jev. A varredura fica presa ao bloco de Stats/Pressão: solta no texto
+  // inteiro ela lia o cabeçalho de odds e os rótulos de aba como se fossem
+  // estatística (Empate 2.36×3.40, Geral 365×5, Min 10×15).
   const conhecidos = /APPM|CG|PI[123]|H2H|Posse|xG|Ataques Perigosos|Finaliza|Escanteios/i;
+  const naoSaoStats = /^(Min|Geral|Casa|Empate|Fora|Over|Under|Linha|Mom|Stats|Press|Prob|Odds|Tab)\b/i;
   const extras = {};
-  for (const m of t.matchAll(/([\d.,]+)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ().]{2,28}?)\s+([\d.,]+)(?=\s|$)/g)) {
-    const rot = m[2].trim();
-    if (conhecidos.test(rot) || /^\d/.test(rot)) continue;
-    extras[rot] = { casa: lvPN(m[1]), fora: lvPN(m[3]) };
+  const blocos = t.split(/Estatísticas ao Vivo|Indicadores de Pressão/i).slice(1);
+  for (const bloco of blocos) {
+    const corpo = bloco.split(/Probabilidades Projetadas|Odds ao Vivo|Total de Gols/i)[0];
+    for (const m of corpo.matchAll(/([\d.,]+)\s*%?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ().]{2,28}?)\s+([\d.,]+)(?=\s|$)/g)) {
+      const rot = m[2].trim();
+      if (conhecidos.test(rot) || naoSaoStats.test(rot)) continue;
+      extras[rot] = { casa: lvPN(m[1]), fora: lvPN(m[3]) };
+    }
   }
 
   // frase de momento do Fut Odds -> vira contexto para o Jev
@@ -1195,13 +1203,36 @@ function lvParse(txt) {
 // contexto acumulado entre colagens (cada aba traz só um pedaço)
 let lvAuto = { times: null, frase: null, press: {} };
 // a odd live default (1.80) nunca deve virar veredito: so conta se veio de colagem
-let lvOddDeColagem = false, lvRefOver = null;
+let lvOddDeColagem = false;
 let lvPeriodo = null;            // null = deduz do minuto; chip fixa manualmente
 let lvParMercado = null;         // { linha, over, under } da exchange, para conferir o modelo
+let lvTabelas = { ht: {}, ft: {} };   // ultimas tabelas lidas, para refazer a escolha da odd
 let lvExtras = {};               // pares da colagem sem campo proprio, vao inteiros ao Jev
 const LV_CTX_ORDEM = ['PI1', 'PI2', 'PI3', 'CG', 'Atq. perig.', 'Finaliz.'];
 // patamares combinados do Fut Odds a partir dos quais o indicador favorece over
 const LV_PATAMAR = { PI1: 70, PI2: 12, PI3: 8 };
+
+// Escolhe a odd live na tabela do período vigente. Chamada na colagem e de novo
+// quando o chip de período muda: a mesma linha tem preço diferente em HT e FT.
+function lvEscolheOdd() {
+  const min = lvNum('lvMin');
+  const linha = (lvNum('lvGolsC') || 0) + (lvNum('lvGolsF') || 0) + 0.5;
+  const per = lvPeriodo || (min === null ? 'ft' : lvPeriodoDe(min));
+  const tab = lvTabelas[per] || {};
+  if (tab[linha]) {
+    $('lvOddLive').value = String(tab[linha].under);
+    lvOddDeColagem = true;
+    lvParMercado = { linha, over: tab[linha].over, under: tab[linha].under };
+    return 'odd live ' + tab[linha].under + ' (under ' + linha + ' ' + per.toUpperCase() + ', back)';
+  }
+  if (Object.keys(tab).length) return '⚠ tabela ' + per.toUpperCase() + ' lida, mas sem a linha ' + linha;
+  // sem tabela para este período: o que estiver no campo não foi conferido
+  if (Object.keys(lvTabelas.ht).length || Object.keys(lvTabelas.ft).length) {
+    lvOddDeColagem = false; lvParMercado = null;
+    return '⚠ sem tabela ' + per.toUpperCase() + ' na colagem — cole Odds → Over/Under do período';
+  }
+  return null;
+}
 
 function lvColar() {
   const txt = $('lvPaste').value;
@@ -1215,19 +1246,10 @@ function lvColar() {
   }
 
   // under limite: linha = placar + 0,5, na tabela do período (HT = 1º tempo, FT = regulamentar)
-  const minAt = lvNum('lvMin'), golsAt = (lvNum('lvGolsC') || 0) + (lvNum('lvGolsF') || 0);
-  const perAt = lvPeriodo || (minAt === null ? 'ft' : lvPeriodoDe(minAt));
-  const linha = golsAt + 0.5;
-  const tab = perAt === 'ht' ? r.linhasHT : r.linhas;
-  if (tab[linha]) {
-    $('lvOddLive').value = String(tab[linha].under);
-    lvOddDeColagem = true;
-    lvParMercado = { linha, over: tab[linha].over, under: tab[linha].under };
-    postos.push('odd live ' + tab[linha].under + ' (under ' + linha + ' ' + perAt.toUpperCase() + ', back)');
-  } else if (Object.keys(tab).length) {
-    postos.push('⚠ tabela ' + perAt.toUpperCase() + ' lida, mas sem a linha ' + linha);
-  }
-  if (r.overLive) lvRefOver = r.overLive;
+  if (Object.keys(r.linhas).length) lvTabelas.ft = r.linhas;
+  if (Object.keys(r.linhasHT).length) lvTabelas.ht = r.linhasHT;
+  const esc2 = lvEscolheOdd();
+  if (esc2) postos.push(esc2);
   if (r.overPre && !$('lvOddOver25Pre').value) {
     $('lvOddOver25Pre').value = String(r.overPre);
     postos.push('odd over 2.5 pré ' + r.overPre);
@@ -1238,7 +1260,8 @@ function lvColar() {
   const times = r.times.length >= 2 ? r.times[0] + ' × ' + r.times[1] : null;
   if (times && lvAuto.times && times !== lvAuto.times) {
     lvAuto = { times: null, frase: null, press: {} };
-    lvOddDeColagem = false; lvRefOver = null; lvExtras = {}; lvParMercado = null;   // jogo novo
+    lvOddDeColagem = false; lvExtras = {}; lvParMercado = null;
+    lvTabelas = { ht: {}, ft: {} };                                   // jogo novo: nada anterior vale
   }
   if (times) lvAuto.times = times;
   if (r.frase) lvAuto.frase = r.frase;
@@ -1279,7 +1302,12 @@ function lvRenderPeriodo() {
   const min = lvNum('lvMin'), gols = (lvNum('lvGolsC') || 0) + (lvNum('lvGolsF') || 0);
   const efetivo = lvPeriodo || (min === null ? 'ft' : lvPeriodoDe(min));
   chipsDo('lvPeriodos', [{ label: 'Automático', v: null }, { label: '1º tempo (HT)', v: 'ht' }, { label: '2º tempo (FT)', v: 'ft' }],
-    it => lvPeriodo === it.v, it => { lvPeriodo = it.v; lvRenderPeriodo(); });
+    it => lvPeriodo === it.v, it => {
+      lvPeriodo = it.v;
+      const msg = lvEscolheOdd();        // a mesma linha tem preço diferente em HT e FT
+      lvRenderPeriodo();
+      if (msg) $('lvPasteMsg').innerHTML = '<b>Período trocado:</b> ' + msg;
+    });
   $('lvMercadoNota').innerHTML = `Apostando <b>under ${gols + 0.5}</b> — nenhum gol a mais at\u00e9 `
     + (efetivo === 'ht' ? 'o intervalo' : 'o fim do jogo')
     + ` (${efetivo.toUpperCase()}, ${Math.max(0, LV_FIM[efetivo] - (min || 0))} min restantes).`;
