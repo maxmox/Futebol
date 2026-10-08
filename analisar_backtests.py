@@ -811,8 +811,8 @@ function jevVereditoDet(c) {
   return { cls: 'v-vermelho', txt: '✖ SEM VALOR — odd abaixo da justa para este cenário' };
 }
 
-function jevMostra(c, detHtml) {
-  const v = jevVereditoDet(c);
+function jevMostra(c, detHtml, vered) {
+  const v = vered || jevVereditoDet(c);
   $('jevVeredito').className = 'veredito ' + v.cls;
   $('jevVeredito').textContent = v.txt;
   let html = `<div class="metricas" style="margin-top:10px">
@@ -828,7 +828,7 @@ function jevMostra(c, detHtml) {
 
 function jevMsgErro(status, data) {
   const msg = (data && (data.error && (data.error.message || data.error.code))) || '';
-  if (status === 401) return 'Chave OpenRouter inválida (401). Confira em Configuração.';
+  if (status === 401) return 'Chave inválida (401). Confira a chave na aba Chave API.';
   if (status === 402) return 'Créditos esgotados na OpenRouter (402).';
   if (status === 422) return 'Requisição rejeitada (422): ' + msg;
   if (status === 429) return 'Limite de requisições (429) — tente em instantes.';
@@ -877,7 +877,7 @@ async function jevDecidir() {
     return;
   }
   if (!jevKey()) {
-    jevMostra(c, `<div class="fonte">⚠ Sem chave OpenRouter, o Jev não avalia o contexto. Salve a chave em Configuração — o veredito acima é só o cálculo de backtest.</div>`);
+    jevMostra(c, `<div class="fonte">⚠ Sem chave de API, o Jev não avalia o contexto. Salve a chave na aba Chave API — o veredito acima é só o cálculo de backtest.</div>`);
     return;
   }
 
@@ -921,8 +921,6 @@ async function jevDecidir() {
     regra = `risco = baixo (confiança ${(ans.risco.confidence || 0).toFixed(2)})`;
   }
 
-  $('jevVeredito').className = 'veredito ' + cls;
-  $('jevVeredito').textContent = txt;
   const probs = ans.risco.probabilities || {};
   const probTxt = Object.entries(probs).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' · ');
   const detHtml = `<div class="jev-probs">
@@ -930,7 +928,7 @@ async function jevDecidir() {
     <b>P(pressão):</b> ${(pressao * 100).toFixed(0)}%${truncado !== null ? ` · <b>P(jogo truncado):</b> ${(truncado * 100).toFixed(0)}%` : ''}<br>
     <b>Distribuição de risco:</b> ${probTxt}
   </div>`;
-  jevMostra(c, detHtml);
+  jevMostra(c, detHtml, { cls, txt });
 }
 
 // ================= abas =================
