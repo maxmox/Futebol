@@ -44,6 +44,15 @@
 - O estado enviado inclui os pares **casa×fora** (que a soma dos campos esconde), os patamares de over do Fut Odds, e `outros_dados` — pares `<n> RÓTULO <n>` sem campo próprio no formulário (Ataques, No Alvo, Cartões Amarelos). **A varredura fica presa ao bloco de Stats/Pressão**: solta no texto inteiro ela lia o cabeçalho de odds e os rótulos de aba como estatística (`Empate 2.36×3.40`, `Geral 365×5`, `Min 10×15`) e mandava isso ao Jev como se fosse dado de jogo.
 - **Troca de período refaz a odd** (`lvEscolheOdd`): a mesma linha tem preço diferente em HT e FT, então mudar o chip depois de colar reescolhe o valor na tabela certa. Se a colagem não trouxe a tabela daquele período, a odd é marcada como não confirmada e o EV+ trava.
 
+## Aba "Scanner" (varredura da Tabela Live)
+
+- Cola a **Tabela Live** inteira do Fut Odds (Ctrl+A na tela) e precifica o under limite de **todos os jogos de uma vez**, nos dois períodos. Não há odd oferecida nessa tela: a saída é a **odd justa** e a **mínima com margem** — o preço que vale caçar na casa.
+- **Parser:** a âncora é o token de minuto (`HT`, `28'`, `-'`). Antes dele, desde o separador de linha anterior, vêm times e placar; depois vêm os 43 valores (19 pares casa/fora + 5 odds pré-live `OCASA/OEMPA/OFORA/OV25/UN25`). Preservar os separadores importa: sem eles o cabeçalho da tabela entra no bloco de times do primeiro jogo e ele some. Jogos que não começaram (`-'`, `0'`) são listados como ignorados, não descartados em silêncio.
+- **Placar:** é o último número do grupo de cada time — o campo varia de 2 a 3 caixas conforme a linha. Confira na tela; se o Fut Odds mudar essa coluna, é aqui que quebra.
+- **λ do jogo** sai do par `OV25`/`UN25` sem overround; sem eles, cai para a média da amostra (2,52) e a linha é marcada.
+- **Ordenação pela janela de backtest** (HT 15/25/35/42, FT 60/70/80/85): é só nelas que o edge está documentado, então a coluna "Janela" mostra `agora` ou `em N'` e a tabela ordena por isso. Clicar no jogo o leva para a aba **Ao vivo** com os campos preenchidos, onde o Jev entra na conta — a odd live fica deliberadamente por confirmar, porque a Tabela Live não a traz.
+- **Fora da faixa medida, a base passa a ser o Poisson calibrado.** Antes a célula da ponta era aplicada a um minuto que ela não cobre: para um 1x0 no intervalo, usar a célula do minuto 60 ignora 15 minutos de jogo e derruba a justa de **5,80 para 3,32**. A mesma regra foi aplicada à aba Ao vivo.
+
 ## Backtests atuais (27.243 entradas, gerado 2026-10-05)
 
 HT: 15-16 (n=3.780), 25-26 (3.709), 35-36 (2.828), 42-43 (2.488, dois CSVs fundidos, focado em 0x0)

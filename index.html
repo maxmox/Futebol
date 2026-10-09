@@ -132,6 +132,7 @@
   <div class="abas">
     <div class="aba on" id="tabDash" onclick="trocaAba('dash')">Dashboard</div>
     <div class="aba" id="tabLive" onclick="trocaAba('live')">Ao vivo (Jev)</div>
+    <div class="aba" id="tabScan" onclick="trocaAba('scan')">Scanner</div>
     <div class="aba" id="tabCfg" onclick="trocaAba('cfg')">Conexão Jev</div>
   </div>
 
@@ -830,12 +831,10 @@ async function jevDecidir() {
 
 // ================= abas =================
 function trocaAba(qual) {
-  $('abaDash').style.display = qual === 'dash' ? '' : 'none';
-  $('abaLive').style.display = qual === 'live' ? '' : 'none';
-  $('abaCfg').style.display = qual === 'cfg' ? '' : 'none';
-  $('tabDash').className = 'aba' + (qual === 'dash' ? ' on' : '');
-  $('tabLive').className = 'aba' + (qual === 'live' ? ' on' : '');
-  $('tabCfg').className = 'aba' + (qual === 'cfg' ? ' on' : '');
+  for (const [a, t] of [['abaDash', 'dash'], ['abaLive', 'live'], ['abaScan', 'scan'], ['abaCfg', 'cfg']])
+    $(a).style.display = qual === t ? '' : 'none';
+  for (const [b, t] of [['tabDash', 'dash'], ['tabLive', 'live'], ['tabScan', 'scan'], ['tabCfg', 'cfg']])
+    $(b).className = 'aba' + (qual === t ? ' on' : '');
 }
 
 // ================= precificação ao vivo (Poisson + Jev) =================
@@ -1225,6 +1224,10 @@ function initLive() {
   $('lvColarBtn').onclick = lvColar;
   // colar ja preenche: o botao vira so um reforco
   $('lvPaste').addEventListener('paste', () => setTimeout(lvColar, 0));
+  chipsDo('scMargens', [{ label: '0%', v: 0 }, { label: '5%', v: .05 }, { label: '10%', v: .10 }],
+    it => scMargem === it.v, it => { scMargem = it.v; if (scLinhas.length) scanRodar(); });
+  $('scRodar').onclick = scanRodar;
+  $('scPaste').addEventListener('paste', () => setTimeout(scanRodar, 0));
 }
 
 async function lvPrecificar() {
@@ -1252,7 +1255,7 @@ async function lvPrecificar() {
   let lamBase, fonteBase, justaBT = null, extrapolado = false, usouGeralBT = false;
   if (PLACARES.includes(placar)) {
     const { pts, usouGeral } = pontosCalc(periodo, placar);
-    if (pts.length) {
+    if (pts.length && !interpola(pts, min).extra) {
       const it = interpola(pts, min);
       justaBT = 1 / it.p; extrapolado = it.extra; usouGeralBT = usouGeral;
       // o backtest é incondicional quanto à qualidade ofensiva do jogo:
@@ -1268,7 +1271,10 @@ async function lvPrecificar() {
   }
   if (lamBase === undefined) {
     lamBase = lamModelo;
-    fonteBase = `modelo Poisson calibrado (sem célula de backtest para ${placarFmt(placar)})`;
+    const { pts } = PLACARES.includes(placar) ? pontosCalc(periodo, placar) : { pts: [] };
+    fonteBase = pts.length
+      ? `modelo Poisson calibrado — minuto ${min}' está fora da faixa que o backtest mede neste período`
+      : `modelo Poisson calibrado (sem célula de backtest para ${placarFmt(placar)})`;
   }
 
   // Jev classifica o contexto; o código faz a conta
@@ -1395,6 +1401,183 @@ async function lvPrecificar() {
   $('lvBacktest').innerHTML = refs.join('<br>');
   $('lvJev').innerHTML = jevHtml;
   $('lvResultado').style.display = '';
+}
+
+// ================= Scanner: varredura da Tabela Live =================
+// Cola a tabela inteira do Fut Odds e precifica o under limite de todos os
+// jogos de uma vez. Aqui não há odd oferecida: a saída é a odd JUSTA e a
+// MÍNIMA com margem — o preço que vale caçar.
+//
+// Âncora do parser: o token de minuto (HT, 28', -'). O que vem antes dele,
+// desde o separador de linha anterior, são times e placar; depois vêm os 43
+// valores das colunas. Preservar os separadores importa: sem eles o cabeçalho
+// da tabela entra no bloco de times do primeiro jogo e ele se perde.
+const SCAN_PARES = ['h2h', 'pi1', 'pi2', 'pi3', 'appm', 'appm10', 'cg', 'cg10', 'xg', 'xgs',
+  'chut', 'cag', 'cfg', 'canto', 'ataq', 'aper', 'poss', 'amar', 'verm'];
+const SCAN_ODDS = ['ocasa', 'oempa', 'ofora', 'ov25', 'un25'];
+const SCAN_N = SCAN_PARES.length * 2 + SCAN_ODDS.length;
+const SCAN_CABEC = /^(Jogo|H2H|PI[123]|APPM10?|CG10?|xGS?|Chut|CAG|CFG|Canto|Ataq|A\/Per|Poss|Amar|Verm|OCASA|OEMPA|OFORA|OV25|UN25|Ver|Remover|Focar|Tempo|Ligas|Listas|Estratégias|Filtros|Placares|Limpar)$/i;
+// janelas medidas pelos backtests: só nelas o edge está documentado
+const SCAN_JANELAS = { ht: [15.5, 25.5, 35.5, 42.5], ft: [60.5, 70.5, 80.5, 85.5] };
+
+const scEhNum = l => /^-?[\d.,]+%?$/.test(l) && /\d/.test(l);
+const scNum = l => { const v = parseFloat(String(l).replace('%', '').replace(',', '.')); return isNaN(v) ? null : v; };
+
+function scanParse(txt) {
+  const brutas = String(txt || '').split('\n');
+  const linhas = [], corte = new Set();
+  for (const b of brutas) {
+    const l = b.trim();
+    if (l === '' || SCAN_CABEC.test(l)) { corte.add(linhas.length); continue; }
+    linhas.push(l);
+  }
+  const marcas = [];
+  linhas.forEach((l, i) => { if (/^(HT|FT|-'|\d{1,3}')$/.test(l)) marcas.push(i); });
+
+  const jogos = [], ignorados = [];
+  marcas.forEach((mi, k) => {
+    let ini = k === 0 ? 0 : marcas[k - 1] + 1 + SCAN_N;
+    for (const c of corte) if (c > ini && c <= mi) ini = Math.max(ini, c);
+    const bloco = linhas.slice(ini, mi);
+    const vals = linhas.slice(mi + 1, mi + 1 + SCAN_N);
+    const times = bloco.filter(l => !scEhNum(l) && !/ logo$/.test(l) && l !== '-');
+    if (times.length < 2 || vals.length < SCAN_N) { ignorados.push({ nome: bloco.join(' ').slice(0, 40), por: 'formato não reconhecido' }); return; }
+
+    const marca = linhas[mi], nome = times[0] + ' × ' + times[1];
+    if (/^(-'|0')$/.test(marca)) { ignorados.push({ nome, por: 'não começou' }); return; }
+
+    const i1 = bloco.indexOf(times[0]), i2 = bloco.indexOf(times[1]);
+    const g1 = bloco.slice(i1, i2).filter(scEhNum).map(scNum);
+    const g2 = bloco.slice(i2).filter(scEhNum).map(scNum);
+    if (!g1.length || !g2.length) { ignorados.push({ nome, por: 'sem placar' }); return; }
+
+    const o = { casa: times[0], fora: times[1], golsC: g1[g1.length - 1], golsF: g2[g2.length - 1],
+                noIntervalo: marca === 'HT', minuto: marca === 'HT' ? 45 : (parseInt(marca, 10) || 0) };
+    SCAN_PARES.forEach((n, j) => { o[n] = [scNum(vals[j * 2]), scNum(vals[j * 2 + 1])]; });
+    SCAN_ODDS.forEach((n, j) => { o[n] = scNum(vals[SCAN_PARES.length * 2 + j]); });
+    jogos.push(o);
+  });
+  return { jogos, ignorados };
+}
+
+const scSoma = par => (par && par[0] !== null ? par[0] : 0) + (par && par[1] !== null ? par[1] : 0);
+
+// Preço do under limite de um jogo num período. Mesmo motor da aba Ao vivo:
+// backtest condicionado ao λ do jogo, Poisson calibrado onde o backtest não mede.
+function scanPreco(j, periodo, margem) {
+  const min = j.minuto, gols = j.golsC + j.golsF;
+  if (periodo === 'ht' && (j.noIntervalo || min >= 45)) return null;
+
+  let lamJogo = LV_LAM_AMOSTRA, fonteLam = 'média da amostra (sem OV25/UN25)';
+  if (j.ov25 > 1 && j.un25 > 1) {
+    lamJogo = lambdaDaProb(1 - lvProbSemMargem(j.ov25, j.un25), 2.5);
+    fonteLam = `OV25 ${fmtOdd(j.ov25)} / UN25 ${fmtOdd(j.un25)}`;
+  }
+  const lm = lvLamRestante(lamJogo, min, periodo, gols);
+  const la = lvLamRestante(LV_LAM_AMOSTRA, min, periodo, gols);
+  const fator = la > 0 ? Math.pow(lm / la, lvPesoPreJogo(min)) : 1;
+
+  // backtest só dentro da faixa que ele mede: fora dela a célula da ponta
+  // seria aplicada a um minuto que ela não cobre (no intervalo isso chega a
+  // ignorar 15 minutos de jogo e a justa cai de ~5,8 para ~3,3)
+  let lamBase = lm, base = 'Poisson calibrado', n = null;
+  const placar = `${j.golsC}-${j.golsF}`;
+  if (PLACARES.includes(placar)) {
+    const { pts, usouGeral } = pontosCalc(periodo, placar);
+    if (pts.length) {
+      const it = interpola(pts, min);
+      if (!it.extra) {
+        lamBase = -Math.log(Math.min(0.999, it.p)) * fator;
+        base = usouGeral ? 'backtest (taxa geral)' : 'backtest';
+        n = pts.reduce((a, q) => a + (q.n || 0), 0);
+      }
+    }
+  }
+  const p = Math.exp(-lamBase);
+  const futuras = SCAN_JANELAS[periodo].filter(x => x >= min - 1);
+  const janela = futuras.length ? Math.round(futuras[0] - min) : null;
+
+  const sinais = [];
+  if (scSoma(j.pi1) >= 70) sinais.push('PI1 ' + scSoma(j.pi1));
+  if (scSoma(j.pi2) >= 12) sinais.push('PI2 ' + scSoma(j.pi2));
+  if (scSoma(j.pi3) >= 8) sinais.push('PI3 ' + scSoma(j.pi3));
+  if (scSoma(j.verm) > 0) sinais.push('expulsão');
+
+  return { periodo, linha: gols + 0.5, p, justa: 1 / p, minima: (1 / p) * (1 + margem),
+           lamJogo, fonteLam, fator, base, n, janela, sinais };
+}
+
+let scMargem = 0.05, scLinhas = [];
+
+function scanRodar() {
+  const { jogos, ignorados } = scanParse($('scPaste').value);
+  scLinhas = [];
+  for (const j of jogos)
+    for (const per of ['ht', 'ft']) {
+      const r = scanPreco(j, per, scMargem);
+      if (r) scLinhas.push({ j, r });
+    }
+  // ordena por proximidade da janela de backtest: é onde o edge está medido
+  scLinhas.sort((a, b) => (a.r.janela === null ? 999 : a.r.janela) - (b.r.janela === null ? 999 : b.r.janela)
+    || a.r.justa - b.r.justa);
+
+  if (!scLinhas.length) {
+    $('scResumo').innerHTML = '<b>Nenhum jogo reconhecido.</b> Copie a Tabela Live inteira (cabeçalho junto) e cole aqui.';
+    $('scTabela').innerHTML = '';
+    return;
+  }
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  $('scResumo').innerHTML = `<b>${jogos.length} jogos lidos</b> · ${scLinhas.length} mercados precificados`
+    + (ignorados.length ? ` · <span class="nota">fora: ${esc(ignorados.map(i => i.nome + ' (' + i.por + ')').join(' · '))}</span>` : '');
+
+  let html = '<tr><th>Jogo</th><th>Min</th><th>Mercado</th><th>Justa</th><th>Mínima</th><th>Janela</th><th>Base</th><th>Sinais</th></tr>';
+  scLinhas.forEach(({ j, r }, i) => {
+    const cor = r.janela !== null && r.janela <= 1 ? ' style="background:rgba(46,204,113,.10)"' : '';
+    html += `<tr${cor}>`
+      + `<td><a href="#" onclick="scanAbrir(${i});return false">${esc(j.casa)} × ${esc(j.fora)}</a></td>`
+      + `<td>${j.noIntervalo ? 'HT' : j.minuto + "'"}</td>`
+      + `<td>under ${r.linha} ${r.periodo.toUpperCase()}</td>`
+      + `<td><b>${fmtOdd(r.justa)}</b></td><td>${fmtOdd(r.minima)}</td>`
+      + `<td>${r.janela === null ? '—' : r.janela <= 0 ? '<b>agora</b>' : 'em ' + r.janela + "'"}</td>`
+      + `<td class="fonte">${r.base}${r.n ? ' n=' + fmtN(r.n) : ''}</td>`
+      + `<td>${r.sinais.length ? '<span style="color:var(--amarelo)">' + esc(r.sinais.join(' · ')) + '</span>' : '—'}</td>`
+      + '</tr>';
+  });
+  $('scTabela').innerHTML = html;
+}
+
+// manda o jogo para a aba Ao vivo, onde o Jev entra na conta
+function scanAbrir(i) {
+  const { j, r } = scLinhas[i];
+  $('lvGolsC').value = String(j.golsC);
+  $('lvGolsF').value = String(j.golsF);
+  $('lvMin').value = String(j.minuto);
+  $('lvOver25').value = '';
+  if (j.ov25 > 1 && j.un25 > 1) {
+    $('lvOver25').value = (lvProbSemMargem(j.ov25, j.un25) * 100).toFixed(1);
+    $('lvOddOver25Pre').value = String(j.ov25);
+  }
+  const campos = { lvPI1: 'pi1', lvPI2: 'pi2', lvPI3: 'pi3', lvCG: 'cg', lvCG10: 'cg10',
+                   lvAPPM: 'appm', lvAPPM10: 'appm10', lvXG: 'xg' };
+  for (const [id, k] of Object.entries(campos)) $(id).value = String(scSoma(j[k]));
+  $('lvPosse').value = j.poss[0] !== null ? String(j.poss[0]) : '';
+  $('lvAPC').value = j.aper[0] !== null ? String(j.aper[0]) : '';
+  $('lvAPF').value = j.aper[1] !== null ? String(j.aper[1]) : '';
+  $('lvFinC').value = j.chut[0] !== null ? String(j.chut[0]) : '';
+  $('lvFinF').value = j.chut[1] !== null ? String(j.chut[1]) : '';
+  $('lvEscC').value = j.canto[0] !== null ? String(j.canto[0]) : '';
+  $('lvEscF').value = j.canto[1] !== null ? String(j.canto[1]) : '';
+  lvPeriodo = r.periodo;
+  // a odd do under limite não vem na Tabela Live: fica por confirmar de propósito
+  lvOddDeColagem = false; lvParMercado = null; lvTabelas = { ht: {}, ft: {} };
+  lvAuto = { times: j.casa + ' × ' + j.fora, frase: null, press: {} };
+  $('lvCtx').value = `[auto] ${j.casa} × ${j.fora} — PI1 ${j.pi1.join('×')} · PI2 ${j.pi2.join('×')} · `
+    + `PI3 ${j.pi3.join('×')} · CG ${j.cg.join('×')} · atq.perig. ${j.aper.join('×')}`;
+  lvRenderPeriodo();
+  $('lvPasteMsg').innerHTML = '<b>Veio do Scanner.</b> Falta a <b>odd live do under limite</b> — '
+    + 'cole Odds → Over/Under do jogo, ou digite à mão, antes de precificar.';
+  trocaAba('live');
+  window.scrollTo(0, 0);
 }
 
 const extrasDe = r => r[5] || {};
