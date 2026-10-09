@@ -355,6 +355,26 @@
   </div><!-- /abaLive -->
 
   <!-- ============ ABA CONEXÃO JEV ============ -->
+  <!-- ============ ABA SCANNER ============ -->
+  <div id="abaScan" style="display:none">
+
+  <div class="card">
+    <h2>Varredura da Tabela Live</h2>
+    <p class="nota" style="margin:0 0 10px">No Fut Odds, abra a <b>Tabela Live</b>, selecione a tela toda (Ctrl+A), Ctrl+C e cole aqui. Precifica o under limite de todos os jogos de uma vez, nos dois per&iacute;odos. <b>N&atilde;o h&aacute; odd oferecida nesta tela</b> &mdash; a sa&iacute;da &eacute; a odd justa e a m&iacute;nima com margem, o pre&ccedil;o que vale ca&ccedil;ar.</p>
+    <textarea id="scPaste" rows="4" placeholder="Cole a Tabela Live inteira, com o cabeçalho de colunas junto."></textarea>
+    <div class="lbl">Margem de segurança</div>
+    <div class="chips" id="scMargens"></div>
+    <button class="btn-jev" id="scRodar" style="margin-top:10px">Precificar todos</button>
+    <div id="scResumo" class="jev-probs" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <div class="scroll"><table class="dados" id="scTabela"></table></div>
+    <p class="nota" style="margin:10px 0 0">Ordenado pela proximidade das <b>janelas medidas pelos backtests</b> (HT 15/25/35/42, FT 60/70/80/85) &mdash; &eacute; s&oacute; nelas que o edge est&aacute; documentado. Clique no jogo para lev&aacute;-lo &agrave; aba <b>Ao vivo</b>, onde o Jev entra na conta. Fora da faixa medida a base passa a ser o Poisson calibrado: a c&eacute;lula da ponta aplicada a um minuto que ela n&atilde;o cobre chega a ignorar 15 minutos de jogo.</p>
+  </div>
+
+  </div><!-- /abaScan -->
+
   <div id="abaCfg" style="display:none">
   <div class="card">
     <h2>Conexão do Jev</h2>
@@ -831,10 +851,12 @@ async function jevDecidir() {
 
 // ================= abas =================
 function trocaAba(qual) {
+  // tolera elemento ausente: um id errado aqui derrubava a navegacao inteira,
+  // porque a excecao matava o laco antes de exibir as abas seguintes
   for (const [a, t] of [['abaDash', 'dash'], ['abaLive', 'live'], ['abaScan', 'scan'], ['abaCfg', 'cfg']])
-    $(a).style.display = qual === t ? '' : 'none';
+    if ($(a)) $(a).style.display = qual === t ? '' : 'none';
   for (const [b, t] of [['tabDash', 'dash'], ['tabLive', 'live'], ['tabScan', 'scan'], ['tabCfg', 'cfg']])
-    $(b).className = 'aba' + (qual === t ? ' on' : '');
+    if ($(b)) $(b).className = 'aba' + (qual === t ? ' on' : '');
 }
 
 // ================= precificação ao vivo (Poisson + Jev) =================
@@ -1224,10 +1246,12 @@ function initLive() {
   $('lvColarBtn').onclick = lvColar;
   // colar ja preenche: o botao vira so um reforco
   $('lvPaste').addEventListener('paste', () => setTimeout(lvColar, 0));
-  chipsDo('scMargens', [{ label: '0%', v: 0 }, { label: '5%', v: .05 }, { label: '10%', v: .10 }],
-    it => scMargem === it.v, it => { scMargem = it.v; if (scLinhas.length) scanRodar(); });
-  $('scRodar').onclick = scanRodar;
-  $('scPaste').addEventListener('paste', () => setTimeout(scanRodar, 0));
+  if ($('scRodar')) {
+    chipsDo('scMargens', [{ label: '0%', v: 0 }, { label: '5%', v: .05 }, { label: '10%', v: .10 }],
+      it => scMargem === it.v, it => { scMargem = it.v; if (scLinhas.length) scanRodar(); });
+    $('scRodar').onclick = scanRodar;
+    $('scPaste').addEventListener('paste', () => setTimeout(scanRodar, 0));
+  }
 }
 
 async function lvPrecificar() {
