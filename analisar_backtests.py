@@ -1665,6 +1665,8 @@ function scanRodar() {
       + '</tr>';
   });
   $('scTabela').innerHTML = html;
+  // Motor 1 (empírico, repo under-): acrescenta as colunas ao lado do preço atual
+  if (window.Motor1) Motor1.scanner(scLinhas, $('scTabela'));
 }
 
 // manda o jogo para a aba Ao vivo, onde o Jev entra na conta
@@ -1775,6 +1777,7 @@ function renderStats() {
   initLive();
 })();
 </script>
+<script src="motor1/motor1.js"></script>
 </body>
 </html>
 """
